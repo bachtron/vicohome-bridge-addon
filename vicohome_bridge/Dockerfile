@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1
 
 # Builder stage: compile vico-cli for Linux
-FROM golang:1.22-alpine AS builder
+FROM golang:1.23-alpine AS builder
 
 WORKDIR /src
 
@@ -17,7 +17,6 @@ RUN CGO_ENABLED=0 GOOS=linux go build -o /out/vico-cli main.go
 
 # -------------------------------------------------------------------
 # Runtime image: Home Assistant base image for aarch64 (ARM64)
-# This keeps bashio and s6-overlay available.
 # -------------------------------------------------------------------
 FROM ghcr.io/home-assistant/aarch64-base:3.19
 
