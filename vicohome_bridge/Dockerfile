@@ -16,11 +16,10 @@ COPY vico-cli-main/ ./
 RUN CGO_ENABLED=0 GOOS=linux go build -o /out/vico-cli main.go
 
 # -------------------------------------------------------------------
-# Runtime image: Home Assistant add-on base image (Alpine-based)
-# BUILD_FROM is provided by Supervisor based on build_from in config.yaml
+# Runtime image: Home Assistant base image for aarch64 (ARM64)
+# This keeps bashio and s6-overlay available.
 # -------------------------------------------------------------------
-ARG BUILD_FROM=ghcr.io/home-assistant/aarch64-base:3.19
-FROM ${BUILD_FROM}
+FROM ghcr.io/home-assistant/aarch64-base:3.19
 
 # Install MQTT client and jq for JSON handling
 RUN apk add --no-cache mosquitto-clients jq
