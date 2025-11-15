@@ -18,6 +18,11 @@ BASE_TOPIC=$(bashio::config 'base_topic')
 [ -z "${LOG_LEVEL}" ] && LOG_LEVEL="info"
 [ -z "${BASE_TOPIC}" ] && BASE_TOPIC="vicohome"
 
+bashio::log.info "Vicohome Bridge configuration:"
+bashio::log.info "  poll_interval = ${POLL_INTERVAL}s"
+bashio::log.info "  base_topic    = ${BASE_TOPIC}"
+bashio::log.info "  log_level     = ${LOG_LEVEL}"
+
 if [ -z "${EMAIL}" ] || [ -z "${PASSWORD}" ]; then
   bashio::log.error "You must set 'email' and 'password' in the add-on configuration."
   exit 1
@@ -49,6 +54,13 @@ bashio::log.info "Using MQTT broker at ${MQTT_HOST}:${MQTT_PORT}, base topic: ${
 # ==========================
 export VICOHOME_EMAIL="${EMAIL}"
 export VICOHOME_PASSWORD="${PASSWORD}"
+
+# Quick sanity check: what does vico-cli say?
+if /usr/local/bin/vico-cli --version >/tmp/vico_version.log 2>&1; then
+  bashio::log.info "vico-cli version: $(cat /tmp/vico_version.log)"
+else
+  bashio::log.warning "Could not get vico-cli version. Output: $(head -c 200 /tmp/vico_version.log 2>/dev/null)"
+fi
 
 # Ensure /data exists for persistence (it should in HA add-ons)
 mkdir -p /data
@@ -155,20 +167,35 @@ bashio::log.info "Starting Vicohome Bridge: polling every ${POLL_INTERVAL}s"
 #  Main loop
 # ==========================
 while true; do
-  bashio::log.debug "Running vico-cli events list --format json"
+  bashio::log.debug "Running: vico-cli events list --format json"
 
   JSON_OUTPUT=$(/usr/local/bin/vico-cli events list --format json 2>/tmp/vico_error.log)
   EXIT_CODE=$?
 
-  if [ ${EXIT_CODE} -ne 0 ] || [ -z "${JSON_OUTPUT}" ]; then
-    bashio::log.warning "vico-cli failed or returned empty data (exit ${EXIT_CODE}). See /tmp/vico_error.log"
-  else
-    # Expecting an array of events; stream each as individual JSON
+  if [ ${EXIT_CODE} -ne 0 ]; then
+    bashio::log.error "vico-cli exited with code ${EXIT_CODE}. Stderr (first 300 chars): $(head -c 300 /tmp/vico_error.log)"
+    # Back off a bit to avoid log spam
+    sleep "${POLL_INTERVAL}"
+    continue
+  fi
+
+  if [ -z "${JSON_OUTPUT}" ] || [ "${JSON_OUTPUT}" = "null" ]; then
+    bashio::log.info "vico-cli returned empty or null JSON (no events for this period?)."
+    sleep "${POLL_INTERVAL}"
+    continue
+  fi
+
+  # Log a small snippet so we can see format
+  bashio::log.debug "vico-cli raw JSON (first 300 chars): $(echo "${JSON_OUTPUT}" | head -c 300)"
+
+  # Detect whether JSON is array or object
+  if echo "${JSON_OUTPUT}" | jq -e 'type=="array"' >/dev/null 2>&1; then
+    # Array of events
     echo "${JSON_OUTPUT}" | jq -c '.[]' | while read -r event; do
       # Try a few common keys to get camera ID
       CAMERA_ID=$(echo "${event}" | jq -r '.camera_id // .camera.uuid // .cameraId // .device_id // .deviceId // empty')
       if [ -z "${CAMERA_ID}" ] || [ "${CAMERA_ID}" = "null" ]; then
-        bashio::log.debug "Event without camera_id/device_id, skipping"
+        bashio::log.debug "Event without camera_id/device_id, skipping. Event snippet: $(echo "${event}" | head -c 120)"
         continue
       fi
 
@@ -188,6 +215,28 @@ while true; do
         publish_motion_pulse "${SAFE_ID}"
       fi
     done
+  else
+    # Single object case: treat whole JSON as a single event
+    event="${JSON_OUTPUT}"
+
+    CAMERA_ID=$(echo "${event}" | jq -r '.camera_id // .camera.uuid // .cameraId // .device_id // .deviceId // empty')
+    if [ -z "${CAMERA_ID}" ] || [ "${CAMERA_ID}" = "null" ]; then
+      bashio::log.debug "Single event without camera_id/device_id. Event snippet: $(echo "${event}" | head -c 120)"
+      sleep "${POLL_INTERVAL}"
+      continue
+    fi
+
+    CAMERA_NAME=$(echo "${event}" | jq -r '.camera_name // .camera.name // .cameraName // .title // empty')
+    EVENT_TYPE=$(echo "${event}" | jq -r '.type // .event_type // .eventType // empty')
+
+    SAFE_ID=$(sanitize_id "${CAMERA_ID}")
+
+    ensure_discovery_published "${CAMERA_ID}" "${CAMERA_NAME}"
+    publish_event_for_camera "${SAFE_ID}" "${event}"
+
+    if [ "${EVENT_TYPE}" = "motion" ] || [ "${EVENT_TYPE}" = "person" ] || [ "${EVENT_TYPE}" = "human" ]; then
+      publish_motion_pulse "${SAFE_ID}"
+    fi
   fi
 
   sleep "${POLL_INTERVAL}"
