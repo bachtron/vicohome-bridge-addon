@@ -80,14 +80,16 @@ ensure_discovery_published() {
   local safe_id
   safe_id=$(sanitize_id "${camera_id}")
 
-  local marker="/data/cameras_seen_${safe_id}"
+  # NOTE: _v2 so HA sees these as new devices + we re-publish discovery
+  local marker="/data/cameras_seen_v2_${safe_id}"
   if [ -f "${marker}" ]; then
     return 0
   fi
 
   touch "${marker}"
 
-  local device_ident="vicohome_camera_${safe_id}"
+  # NOTE: _v2 in the identifier so unique_id changes
+  local device_ident="vicohome_camera_v2_${safe_id}"
   local state_topic="${BASE_TOPIC}/${safe_id}/state"
   local motion_topic="${BASE_TOPIC}/${safe_id}/motion"
 
@@ -198,7 +200,7 @@ while true; do
   if echo "${JSON_OUTPUT}" | jq -e 'type=="array"' >/dev/null 2>&1; then
     # Array of events
     echo "${JSON_OUTPUT}" | jq -c '.[]' | while read -r event; do
-      # >>> UPDATED: use serialNumber as ID if present
+      # Use serialNumber as ID if present
       CAMERA_ID=$(echo "${event}" | jq -r '.deviceId // .device_id // .camera_id // .serialNumber // .camera.uuid // .cameraId // empty')
       if [ -z "${CAMERA_ID}" ] || [ "${CAMERA_ID}" = "null" ]; then
         bashio::log.info "Event without camera/device ID, skipping. Event snippet: $(echo "${event}" | head -c 120)"
@@ -225,7 +227,7 @@ while true; do
     # Single object case
     event="${JSON_OUTPUT}"
 
-    # >>> UPDATED: use serialNumber as ID if present
+    # Use serialNumber as ID if present
     CAMERA_ID=$(echo "${event}" | jq -r '.deviceId // .device_id // .camera_id // .serialNumber // .camera.uuid // .cameraId // empty')
     if [ -z "${CAMERA_ID}" ] || [ "${CAMERA_ID}" = "null" ]; then
       bashio::log.info "Single event without camera/device ID. Event snippet: $(echo "${event}" | head -c 120)"
