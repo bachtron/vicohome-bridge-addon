@@ -31,3 +31,4 @@ ports:
 
 map:
   - "share:rw"
+   host_network: true
