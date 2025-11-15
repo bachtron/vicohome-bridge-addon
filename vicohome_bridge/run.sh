@@ -161,6 +161,46 @@ publish_motion_pulse() {
   ) &
 }
 
+# ==========================
+#  Initial device discovery
+# ==========================
+bashio::log.info "Running initial device discovery via 'vico-cli devices list --format json'..."
+
+DEVICES_JSON=$(/usr/local/bin/vico-cli devices list --format json 2>/tmp/vico_devices_error.log)
+DEV_EXIT=$?
+
+if [ ${DEV_EXIT} -ne 0 ]; then
+  bashio::log.warning "vico-cli devices list failed (exit ${DEV_EXIT}). stderr (first 200 chars): $(head -c 200 /tmp/vico_devices_error.log 2>/dev/null)"
+else
+  if [ -z "${DEVICES_JSON}" ] || [ "${DEVICES_JSON}" = "null" ]; then
+    bashio::log.info "vico-cli devices list returned empty/null; skipping initial device discovery."
+  else
+    dev_first_char=$(printf '%s' "${DEVICES_JSON}" | sed -n '1s/^\(.\).*$/\1/p')
+    if [ "${dev_first_char}" = "[" ]; then
+      echo "${DEVICES_JSON}" | jq -c '.[]' | while read -r dev; do
+        DEV_ID=$(echo "${dev}" | jq -r '.serialNumber // .deviceId // .device_id // .id // empty')
+        if [ -z "${DEV_ID}" ] || [ "${DEV_ID}" = "null" ]; then
+          bashio::log.info "Device without ID, skipping. Snippet: $(echo "${dev}" | head -c 120)"
+          continue
+        fi
+        DEV_NAME=$(echo "${dev}" | jq -r '.deviceName // .name // empty')
+        bashio::log.info "Ensuring discovery for device '${DEV_NAME}' (${DEV_ID})"
+        ensure_discovery_published "${DEV_ID}" "${DEV_NAME}"
+      done
+    else
+      dev="${DEVICES_JSON}"
+      DEV_ID=$(echo "${dev}" | jq -r '.serialNumber // .deviceId // .device_id // .id // empty')
+      if [ -n "${DEV_ID}" ] && [ "${DEV_ID}" != "null" ]; then
+        DEV_NAME=$(echo "${dev}" | jq -r '.deviceName // .name // empty')
+        bashio::log.info "Ensuring discovery for single device '${DEV_NAME}' (${DEV_ID})"
+        ensure_discovery_published "${DEV_ID}" "${DEV_NAME}"
+      else
+        bashio::log.info "Single-device JSON without ID; skipping."
+      fi
+    fi
+  fi
+fi
+
 bashio::log.info "Starting Vicohome Bridge: polling every ${POLL_INTERVAL}s"
 
 # ==========================
