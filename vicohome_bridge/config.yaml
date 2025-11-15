@@ -1,1 +1,33 @@
+name: "Vicohome Bridge"
+slug: "vicohome_bridge"
+version: "0.1.0"
+description: "Use Vicohome CLI to expose latest event video to Home Assistant."
+startup: services
+boot: auto
+arch:
+  - amd64
+  - armv7
+  - aarch64
+init: false
+ingress: false
+panel_icon: mdi:cctv
 
+options:
+  vicohome_email: ""
+  vicohome_password: ""
+  event_index: 0
+  http_port: 8099
+  log_level: "info"
+
+schema:
+  vicohome_email: str
+  vicohome_password: str
+  event_index: int
+  http_port: int
+  log_level: list(info|debug|warning|error)
+
+ports:
+  "8099/tcp": 8099
+
+map:
+  - "share:rw"
