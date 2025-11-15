@@ -1,34 +1,41 @@
 name: "Vicohome Bridge"
 slug: "vicohome_bridge"
-version: "0.1.0"
-description: "Use Vicohome CLI to expose latest event video to Home Assistant."
+version: "1.1.1"
+description: "Home Assistant add-on that wraps the vico-cli Vicohome client and publishes events to MQTT with per-camera topics and MQTT discovery."
+url: "https://github.com/your-user/vicohome-bridge-addon"
+
+arch:
+  - aarch64
+  - amd64
+  - armhf
+  - armv7
+  - i386
+
+init: false
 startup: services
 boot: auto
-arch:
-  - amd64
-  - armv7
-  - aarch64
-init: false
-ingress: false
-panel_icon: mdi:cctv
+
+# Let Supervisor provide correct base images per arch via BUILD_FROM
+build_from:
+  aarch64: "ghcr.io/home-assistant/aarch64-base:3.19"
+  amd64: "ghcr.io/home-assistant/amd64-base:3.19"
+  armhf: "ghcr.io/home-assistant/armhf-base:3.19"
+  armv7: "ghcr.io/home-assistant/armv7-base:3.19"
+  i386: "ghcr.io/home-assistant/i386-base:3.19"
+
+services:
+  - mqtt:need
 
 options:
-  vicohome_email: ""
-  vicohome_password: ""
-  event_index: 0
-  http_port: 8099
+  email: ""
+  password: ""
+  poll_interval: 60
   log_level: "info"
+  base_topic: "vicohome"
 
 schema:
-  vicohome_email: str
-  vicohome_password: str
-  event_index: int
-  http_port: int
-  log_level: list(info|debug|warning|error)
-
-ports:
-  "8099/tcp": 8099
-
-map:
-  - "share:rw"
-   host_network: true
+  email: str
+  password: password
+  poll_interval: int?
+  log_level: list(debug|info|warning|error)?
+  base_topic: str?
