@@ -41,7 +41,6 @@ MQTT_PORT=$(bashio::services mqtt "port")
 MQTT_USERNAME=$(bashio::services mqtt "username")
 MQTT_PASSWORD=$(bashio::services mqtt "password")
 
-# Build a common argument string for mosquitto_pub
 MQTT_ARGS="-h ${MQTT_HOST} -p ${MQTT_PORT}"
 if [ -n "${MQTT_USERNAME}" ] && [ "${MQTT_USERNAME}" != "null" ]; then
   MQTT_ARGS="${MQTT_ARGS} -u ${MQTT_USERNAME} -P ${MQTT_PASSWORD}"
@@ -54,25 +53,49 @@ bashio::log.info "Using MQTT broker at ${MQTT_HOST}:${MQTT_PORT}, base topic: ${
 # ==========================
 export VICOHOME_EMAIL="${EMAIL}"
 export VICOHOME_PASSWORD="${PASSWORD}"
-export VICOHOME_DEBUG="1"   # enable extra CLI debug to stderr
+export VICOHOME_DEBUG="1"
 
-# Quick sanity check: what does vico-cli say for help
-/usr/local/bin/vico-cli 2>/tmp/vico_help.log || true
-bashio::log.info "vico-cli help (first 200 chars): $(head -c 200 /tmp/vico_help.log 2>/dev/null)"
-
-# Ensure /data exists for persistence (it should in HA add-ons)
 mkdir -p /data
 
 # ==========================
 #  Helper functions
 # ==========================
 
-# Sanitize a string to be a safe ID for topics/unique_ids
 sanitize_id() {
   echo "$1" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9]/_/g'
 }
 
-# Publish MQTT discovery config for a camera (only once)
+# Publish status JSON for one device (battery, wifi, ip, status)
+publish_status_for_device() {
+  local camera_id="$1"
+  local battery="$2"
+  local signal="$3"
+  local ip="$4"
+
+  local safe_id
+  safe_id=$(sanitize_id "${camera_id}")
+
+  [ -z "${battery}" ] || [ "${battery}" = "null" ] && battery=0
+  [ -z "${signal}" ] || [ "${signal}" = "null" ] && signal=0
+  [ -z "${ip}" ] || [ "${ip}" = "null" ] && ip=""
+
+  local online="offline"
+  if [ -n "${ip}" ]; then
+    online="online"
+  fi
+
+  local status_topic="${BASE_TOPIC}/${safe_id}/status"
+  local payload
+  payload=$(cat <<EOF
+{"batteryLevel":${battery},"signalStrength":${signal},"ip":"${ip}","status":"${online}"}
+EOF
+)
+
+  mosquitto_pub ${MQTT_ARGS} -t "${status_topic}" -m "${payload}" -q 0 \
+    || bashio::log.warning "Failed to publish status for ${camera_id}"
+}
+
+# v3 marker so HA treats these as a new generation of devices/entities
 ensure_discovery_published() {
   local camera_id="$1"
   local camera_name="$2"
@@ -80,68 +103,95 @@ ensure_discovery_published() {
   local safe_id
   safe_id=$(sanitize_id "${camera_id}")
 
-  # NOTE: _v2 so HA sees these as new devices + we re-publish discovery
-  local marker="/data/cameras_seen_v2_${safe_id}"
+  # Marker so we don't spam discovery
+  local marker="/data/cameras_seen_v3_${safe_id}"
   if [ -f "${marker}" ]; then
     return 0
   fi
-
   touch "${marker}"
 
-  # NOTE: _v2 in the identifier so unique_id changes
-  local device_ident="vicohome_camera_v2_${safe_id}"
+  # v3 device identifier / unique_id base
+  local device_ident="vicohome_camera_v3_${safe_id}"
   local state_topic="${BASE_TOPIC}/${safe_id}/state"
   local motion_topic="${BASE_TOPIC}/${safe_id}/motion"
+  local status_topic="${BASE_TOPIC}/${safe_id}/status"
 
   local sensor_topic="homeassistant/sensor/${device_ident}_last_event/config"
   local motion_config_topic="homeassistant/binary_sensor/${device_ident}_motion/config"
+  local battery_config_topic="homeassistant/sensor/${device_ident}_battery/config"
+  local wifi_config_topic="homeassistant/sensor/${device_ident}_wifi/config"
+  local online_config_topic="homeassistant/binary_sensor/${device_ident}_online/config"
 
-  # Fallback name if empty
   if [ -z "${camera_name}" ] || [ "${camera_name}" = "null" ]; then
     camera_name="Camera ${camera_id}"
   fi
 
-  # JSON payload for last_event sensor
+  # Last Event sensor
   local sensor_payload
   sensor_payload=$(cat <<EOF
-{"name":"Vicohome ${camera_name} Last Event","unique_id":"${device_ident}_last_event","state_topic":"${state_topic}","value_template":"{{ value_json.type }}","json_attributes_topic":"${state_topic}","device":{"identifiers":["${device_ident}"],"name":"Vicohome ${camera_name}","manufacturer":"Vicohome","model":"Camera"}}
+{"name":"Vicohome ${camera_name} Last Event","unique_id":"${device_ident}_last_event","state_topic":"${state_topic}","value_template":"{{ value_json.eventType or value_json.type }}","json_attributes_topic":"${state_topic}","device":{"identifiers":["${device_ident}"],"name":"Vicohome ${camera_name}","manufacturer":"Vicohome","model":"Camera"}}
 EOF
 )
 
-  # JSON payload for motion binary_sensor
+  # Motion binary sensor
   local motion_payload
   motion_payload=$(cat <<EOF
 {"name":"Vicohome ${camera_name} Motion","unique_id":"${device_ident}_motion","state_topic":"${motion_topic}","device_class":"motion","payload_on":"ON","payload_off":"OFF","expire_after":30,"device":{"identifiers":["${device_ident}"],"name":"Vicohome ${camera_name}","manufacturer":"Vicohome","model":"Camera"}}
 EOF
 )
 
-  # Publish discovery configs
+  # Battery sensor
+  local battery_payload
+  battery_payload=$(cat <<EOF
+{"name":"Vicohome ${camera_name} Battery","unique_id":"${device_ident}_battery","state_topic":"${status_topic}","unit_of_measurement":"%","device_class":"battery","value_template":"{{ value_json.batteryLevel }}","device":{"identifiers":["${device_ident}"],"name":"Vicohome ${camera_name}","manufacturer":"Vicohome","model":"Camera"}}
+EOF
+)
+
+  # Wi-Fi signal sensor
+  local wifi_payload
+  wifi_payload=$(cat <<EOF
+{"name":"Vicohome ${camera_name} WiFi","unique_id":"${device_ident}_wifi","state_topic":"${status_topic}","unit_of_measurement":"dBm","icon":"mdi:wifi","value_template":"{{ value_json.signalStrength }}","device":{"identifiers":["${device_ident}"],"name":"Vicohome ${camera_name}","manufacturer":"Vicohome","model":"Camera"}}
+EOF
+)
+
+  # Online status binary_sensor
+  local online_payload
+  online_payload=$(cat <<EOF
+{"name":"Vicohome ${camera_name} Online","unique_id":"${device_ident}_online","state_topic":"${status_topic}","device_class":"connectivity","payload_on":"online","payload_off":"offline","value_template":"{{ value_json.status }}","device":{"identifiers":["${device_ident}"],"name":"Vicohome ${camera_name}","manufacturer":"Vicohome","model":"Camera"}}
+EOF
+)
+
   mosquitto_pub ${MQTT_ARGS} -t "${sensor_topic}" -m "${sensor_payload}" -q 0 || \
     bashio::log.warning "Failed to publish MQTT discovery config for sensor ${device_ident}_last_event"
 
   mosquitto_pub ${MQTT_ARGS} -t "${motion_config_topic}" -m "${motion_payload}" -q 0 || \
     bashio::log.warning "Failed to publish MQTT discovery config for binary_sensor ${device_ident}_motion"
+
+  mosquitto_pub ${MQTT_ARGS} -t "${battery_config_topic}" -m "${battery_payload}" -q 0 || \
+    bashio::log.warning "Failed to publish MQTT discovery config for sensor ${device_ident}_battery"
+
+  mosquitto_pub ${MQTT_ARGS} -t "${wifi_config_topic}" -m "${wifi_payload}" -q 0 || \
+    bashio::log.warning "Failed to publish MQTT discovery config for sensor ${device_ident}_wifi"
+
+  mosquitto_pub ${MQTT_ARGS} -t "${online_config_topic}" -m "${online_payload}" -q 0 || \
+    bashio::log.warning "Failed to publish MQTT discovery config for binary_sensor ${device_ident}_online"
 }
 
-# Publish a single JSON event to per-camera topics
 publish_event_for_camera() {
   local camera_safe_id="$1"
   local event_json="$2"
 
-  # Raw events topic
   mosquitto_pub ${MQTT_ARGS} \
     -t "${BASE_TOPIC}/${camera_safe_id}/events" \
     -m "${event_json}" \
     -q 0 || bashio::log.warning "Failed to publish MQTT message for ${BASE_TOPIC}/${camera_safe_id}/events"
 
-  # State topic (used by the sensor)
   mosquitto_pub ${MQTT_ARGS} \
     -t "${BASE_TOPIC}/${camera_safe_id}/state" \
     -m "${event_json}" \
     -q 0 || bashio::log.warning "Failed to publish MQTT message for ${BASE_TOPIC}/${camera_safe_id}/state"
 }
 
-# Publish motion pulse (ON then OFF after 5s)
 publish_motion_pulse() {
   local camera_safe_id="$1"
   local motion_topic="${BASE_TOPIC}/${camera_safe_id}/motion"
@@ -151,7 +201,6 @@ publish_motion_pulse() {
     -m "ON" \
     -q 0 || bashio::log.warning "Failed to publish motion ON for ${motion_topic}"
 
-  # Turn OFF after a short delay so it behaves like a pulse
   (
     sleep 5
     mosquitto_pub ${MQTT_ARGS} \
@@ -161,53 +210,72 @@ publish_motion_pulse() {
   ) &
 }
 
+# Refresh device status for all cameras (battery/wifi/online)
+refresh_device_status() {
+  bashio::log.info "Refreshing Vicohome device status (battery/wifi/online)..."
+
+  local DEVICES_JSON
+  DEVICES_JSON=$(/usr/local/bin/vico-cli devices list --format json 2>/tmp/vico_devices_error.log)
+  local DEV_EXIT=$?
+
+  if [ ${DEV_EXIT} -ne 0 ]; then
+    bashio::log.warning "vico-cli devices list (status refresh) failed (exit ${DEV_EXIT}). stderr (first 200 chars): $(head -c 200 /tmp/vico_devices_error.log 2>/dev/null)"
+    return
+  fi
+
+  if [ -z "${DEVICES_JSON}" ] || [ "${DEVICES_JSON}" = "null" ]; then
+    bashio::log.info "vico-cli devices list (status refresh) returned empty/null."
+    return
+  fi
+
+  local dev_first_char
+  dev_first_char=$(printf '%s' "${DEVICES_JSON}" | sed -n '1s/^\(.\).*$/\1/p')
+
+  if [ "${dev_first_char}" = "[" ]; then
+    echo "${DEVICES_JSON}" | jq -c '.[]' | while read -r dev; do
+      local DEV_ID BATTERY SIGNAL IP DEV_NAME
+      DEV_ID=$(echo "${dev}" | jq -r '.serialNumber // .deviceId // .device_id // .id // empty')
+      [ -z "${DEV_ID}" ] || [ "${DEV_ID}" = "null" ] && continue
+      DEV_NAME=$(echo "${dev}" | jq -r '.deviceName // .name // .nickname // empty')
+      BATTERY=$(echo "${dev}" | jq -r '.batteryLevel // 0')
+      SIGNAL=$(echo "${dev}" | jq -r '.signalStrength // 0')
+      IP=$(echo "${dev}" | jq -r '.ip // ""')
+
+      ensure_discovery_published "${DEV_ID}" "${DEV_NAME}"
+      publish_status_for_device "${DEV_ID}" "${BATTERY}" "${SIGNAL}" "${IP}"
+    done
+  else
+    local dev DEV_ID BATTERY SIGNAL IP DEV_NAME
+    dev="${DEVICES_JSON}"
+    DEV_ID=$(echo "${dev}" | jq -r '.serialNumber // .deviceId // .device_id // .id // empty')
+    [ -z "${DEV_ID}" ] || [ "${DEV_ID}" = "null" ] && return
+    DEV_NAME=$(echo "${dev}" | jq -r '.deviceName // .name // .nickname // empty')
+    BATTERY=$(echo "${dev}" | jq -r '.batteryLevel // 0')
+    SIGNAL=$(echo "${dev}" | jq -r '.signalStrength // 0')
+    IP=$(echo "${dev}" | jq -r '.ip // ""')
+
+    ensure_discovery_published "${DEV_ID}" "${DEV_NAME}"
+    publish_status_for_device "${DEV_ID}" "${BATTERY}" "${SIGNAL}" "${IP}"
+  fi
+}
+
 # ==========================
 #  Initial device discovery
 # ==========================
 bashio::log.info "Running initial device discovery via 'vico-cli devices list --format json'..."
 
-DEVICES_JSON=$(/usr/local/bin/vico-cli devices list --format json 2>/tmp/vico_devices_error.log)
-DEV_EXIT=$?
+refresh_device_status
 
-if [ ${DEV_EXIT} -ne 0 ]; then
-  bashio::log.warning "vico-cli devices list failed (exit ${DEV_EXIT}). stderr (first 200 chars): $(head -c 200 /tmp/vico_devices_error.log 2>/dev/null)"
-else
-  if [ -z "${DEVICES_JSON}" ] || [ "${DEVICES_JSON}" = "null" ]; then
-    bashio::log.info "vico-cli devices list returned empty/null; skipping initial device discovery."
-  else
-    dev_first_char=$(printf '%s' "${DEVICES_JSON}" | sed -n '1s/^\(.\).*$/\1/p')
-    if [ "${dev_first_char}" = "[" ]; then
-      echo "${DEVICES_JSON}" | jq -c '.[]' | while read -r dev; do
-        DEV_ID=$(echo "${dev}" | jq -r '.serialNumber // .deviceId // .device_id // .id // empty')
-        if [ -z "${DEV_ID}" ] || [ "${DEV_ID}" = "null" ]; then
-          bashio::log.info "Device without ID, skipping. Snippet: $(echo "${dev}" | head -c 120)"
-          continue
-        fi
-        DEV_NAME=$(echo "${dev}" | jq -r '.deviceName // .name // empty')
-        bashio::log.info "Ensuring discovery for device '${DEV_NAME}' (${DEV_ID})"
-        ensure_discovery_published "${DEV_ID}" "${DEV_NAME}"
-      done
-    else
-      dev="${DEVICES_JSON}"
-      DEV_ID=$(echo "${dev}" | jq -r '.serialNumber // .deviceId // .device_id // .id // empty')
-      if [ -n "${DEV_ID}" ] && [ "${DEV_ID}" != "null" ]; then
-        DEV_NAME=$(echo "${dev}" | jq -r '.deviceName // .name // empty')
-        bashio::log.info "Ensuring discovery for single device '${DEV_NAME}' (${DEV_ID})"
-        ensure_discovery_published "${DEV_ID}" "${DEV_NAME}"
-      else
-        bashio::log.info "Single-device JSON without ID; skipping."
-      fi
-    fi
-  fi
-fi
-
-bashio::log.info "Starting Vicohome Bridge: polling every ${POLL_INTERVAL}s"
+bashio::log.info "Starting Vicohome Bridge main loop: polling every ${POLL_INTERVAL}s"
 
 # ==========================
 #  Main loop
 # ==========================
 while true; do
-  bashio::log.info "Polling vico-cli for events (last 24h)..."
+  # Refresh battery/wifi/online each loop
+  refresh_device_status
+
+  bashio::log.info "Polling vico-cli for events..."
 
   JSON_OUTPUT=$(/usr/local/bin/vico-cli events list --format json 2>/tmp/vico_error.log)
   EXIT_CODE=$?
@@ -225,10 +293,8 @@ while true; do
     continue
   fi
 
-  # Log the first chunk so we see what we're dealing with
   bashio::log.info "vico-cli output (first 200 chars): $(echo "${JSON_OUTPUT}" | head -c 200)"
 
-  # If this is clearly NOT JSON (e.g. plain text), log & skip
   first_char=$(printf '%s' "${JSON_OUTPUT}" | sed -n '1s/^\(.\).*$/\1/p')
   if [ "${first_char}" != "[" ] && [ "${first_char}" != "{" ]; then
     bashio::log.info "vico-cli output does not look like JSON (starts with '${first_char}'), skipping parse this cycle."
@@ -236,12 +302,9 @@ while true; do
     continue
   fi
 
-  # Now try to parse as JSON
   if echo "${JSON_OUTPUT}" | jq -e 'type=="array"' >/dev/null 2>&1; then
-    # Array of events
     echo "${JSON_OUTPUT}" | jq -c '.[]' | while read -r event; do
-      # Use serialNumber as ID if present
-      CAMERA_ID=$(echo "${event}" | jq -r '.deviceId // .device_id // .camera_id // .serialNumber // .camera.uuid // .cameraId // empty')
+      CAMERA_ID=$(echo "${event}" | jq -r '.serialNumber // .deviceId // .device_id // .camera_id // .camera.uuid // .cameraId // empty')
       if [ -z "${CAMERA_ID}" ] || [ "${CAMERA_ID}" = "null" ]; then
         bashio::log.info "Event without camera/device ID, skipping. Event snippet: $(echo "${event}" | head -c 120)"
         continue
@@ -252,23 +315,17 @@ while true; do
 
       SAFE_ID=$(sanitize_id "${CAMERA_ID}")
 
-      # Ensure discovery is published once per camera
       ensure_discovery_published "${CAMERA_ID}" "${CAMERA_NAME}"
-
-      # Publish event JSON to per-camera topics
       publish_event_for_camera "${SAFE_ID}" "${event}"
 
-      # If it's a motion/person/bird event, also send a motion pulse
       if [ "${EVENT_TYPE}" = "motion" ] || [ "${EVENT_TYPE}" = "person" ] || [ "${EVENT_TYPE}" = "human" ] || [ "${EVENT_TYPE}" = "bird" ]; then
         publish_motion_pulse "${SAFE_ID}"
       fi
     done
   else
-    # Single object case
     event="${JSON_OUTPUT}"
 
-    # Use serialNumber as ID if present
-    CAMERA_ID=$(echo "${event}" | jq -r '.deviceId // .device_id // .camera_id // .serialNumber // .camera.uuid // .cameraId // empty')
+    CAMERA_ID=$(echo "${event}" | jq -r '.serialNumber // .deviceId // .device_id // .camera_id // .camera.uuid // .cameraId // empty')
     if [ -z "${CAMERA_ID}" ] || [ "${CAMERA_ID}" = "null" ]; then
       bashio::log.info "Single event without camera/device ID. Event snippet: $(echo "${event}" | head -c 120)"
       sleep "${POLL_INTERVAL}"
