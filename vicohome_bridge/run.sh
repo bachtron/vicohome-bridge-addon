@@ -95,7 +95,7 @@ EOF
     || bashio::log.warning "Failed to publish status for ${camera_id}"
 }
 
-# v3 marker so HA treats these as a new generation of devices/entities
+# Always publish full MQTT discovery for a camera (no marker / no skipping)
 ensure_discovery_published() {
   local camera_id="$1"
   local camera_name="$2"
@@ -103,14 +103,6 @@ ensure_discovery_published() {
   local safe_id
   safe_id=$(sanitize_id "${camera_id}")
 
-  # Marker so we don't spam discovery
-  local marker="/data/cameras_seen_v3_${safe_id}"
-  if [ -f "${marker}" ]; then
-    return 0
-  fi
-  touch "${marker}"
-
-  # v3 device identifier / unique_id base
   local device_ident="vicohome_camera_v3_${safe_id}"
   local state_topic="${BASE_TOPIC}/${safe_id}/state"
   local motion_topic="${BASE_TOPIC}/${safe_id}/motion"
@@ -219,7 +211,7 @@ refresh_device_status() {
   local DEV_EXIT=$?
 
   if [ ${DEV_EXIT} -ne 0 ]; then
-    bashio::log.warning "vico-cli devices list (status refresh) failed (exit ${DEV_EXIT}). stderr (first 200 chars): $(head -c 200 /tmp/vico_devices_error.log 2>/dev/null)"
+    bashio::log.warning "vico-cli devices list (status refresh) failed (exit ${DEV_EXIT}). stderr (first 200 chars): $(head-c 200 /tmp/vico_devices_error.log 2>/dev/null)"
     return
   fi
 
@@ -262,8 +254,7 @@ refresh_device_status() {
 # ==========================
 #  Initial device discovery
 # ==========================
-bashio::log.info "Running initial device discovery via 'vico-cli devices list --format json'..."
-
+bashio::log.info "Running initial device discovery & status refresh..."
 refresh_device_status
 
 bashio::log.info "Starting Vicohome Bridge main loop: polling every ${POLL_INTERVAL}s"
