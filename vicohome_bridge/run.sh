@@ -17,6 +17,7 @@ BASE_TOPIC=$(bashio::config 'base_topic')
 [ -z "${POLL_INTERVAL}" ] && POLL_INTERVAL=60
 [ -z "${LOG_LEVEL}" ] && LOG_LEVEL="info"
 [ -z "${BASE_TOPIC}" ] && BASE_TOPIC="vicohome"
+AVAILABILITY_TOPIC="${BASE_TOPIC}/bridge/status"
 
 bashio::log.info "Vicohome Bridge configuration:"
 bashio::log.info "  poll_interval = ${POLL_INTERVAL}s"
@@ -47,6 +48,15 @@ if [ -n "${MQTT_USERNAME}" ] && [ "${MQTT_USERNAME}" != "null" ]; then
 fi
 
 bashio::log.info "Using MQTT broker at ${MQTT_HOST}:${MQTT_PORT}, base topic: ${BASE_TOPIC}"
+
+publish_availability() {
+  local state="$1"
+  mosquitto_pub ${MQTT_ARGS} -t "${AVAILABILITY_TOPIC}" -m "${state}" -r \
+    || bashio::log.warning "Failed to publish availability state '${state}' to ${AVAILABILITY_TOPIC}"
+}
+
+trap 'publish_availability offline' EXIT
+publish_availability online
 
 # ==========================
 #  Environment for vico-cli
@@ -99,14 +109,32 @@ ensure_discovery_published() {
   # Last Event sensor (state = event type, attributes = full JSON)
   local sensor_payload
   sensor_payload=$(cat <<EOF
-{"name":"Vicohome ${camera_name} Last Event","unique_id":"${device_ident}_last_event","state_topic":"${state_topic}","value_template":"{{ value_json.eventType or value_json.type }}","json_attributes_topic":"${state_topic}","device":{"identifiers":["${device_ident}"],"name":"Vicohome ${camera_name}","manufacturer":"Vicohome","model":"Camera"}}
+{"name":"Vicohome ${camera_name} Last Event","unique_id":"${device_ident}_last_event","state_topic":"${state_topic}","availability_topic":"${AVAILABILITY_TOPIC}","payload_available":"online","payload_not_available":"offline","value_template":"{{ value_json.eventType or value_json.type or value_json.event_type }}","json_attributes_topic":"${state_topic}","device":{"identifiers":["${device_ident}"],"name":"Vicohome ${camera_name}","manufacturer":"Vicohome","model":"Camera"}}
 EOF
 )
 
   # Motion binary sensor (short pulse on motion/person/bird/human)
   local motion_payload
   motion_payload=$(cat <<EOF
-{"name":"Vicohome ${camera_name} Motion","unique_id":"${device_ident}_motion","state_topic":"${motion_topic}","device_class":"motion","payload_on":"ON","payload_off":"OFF","expire_after":30,"device":{"identifiers":["${device_ident}"],"name":"Vicohome ${camera_name}","manufacturer":"Vicohome","model":"Camera"}}
+{"name":"Vicohome ${camera_name} Motion","unique_id":"${device_ident}_motion","state_topic":"${motion_topic}","availability_topic":"${AVAILABILITY_TOPIC}","payload_available":"online","payload_not_available":"offline","device_class":"motion","payload_on":"ON","payload_off":"OFF","expire_after":30,"device":{"identifiers":["${device_ident}"],"name":"Vicohome ${camera_name}","manufacturer":"Vicohome","model":"Camera"}}
+EOF
+)
+
+  local battery_payload
+  battery_payload=$(cat <<EOF
+{"name":"Vicohome ${camera_name} Battery","unique_id":"${device_ident}_battery","state_topic":"${telemetry_topic}","availability_topic":"${AVAILABILITY_TOPIC}","payload_available":"online","payload_not_available":"offline","value_template":"{{ value_json.batteryLevel }}","unit_of_measurement":"%","device_class":"battery","state_class":"measurement","device":{"identifiers":["${device_ident}"],"name":"Vicohome ${camera_name}","manufacturer":"Vicohome","model":"Camera"}}
+EOF
+)
+
+  local wifi_payload
+  wifi_payload=$(cat <<EOF
+{"name":"Vicohome ${camera_name} WiFi","unique_id":"${device_ident}_wifi","state_topic":"${telemetry_topic}","availability_topic":"${AVAILABILITY_TOPIC}","payload_available":"online","payload_not_available":"offline","value_template":"{{ value_json.signalStrength }}","unit_of_measurement":"dBm","device_class":"signal_strength","state_class":"measurement","entity_category":"diagnostic","device":{"identifiers":["${device_ident}"],"name":"Vicohome ${camera_name}","manufacturer":"Vicohome","model":"Camera"}}
+EOF
+)
+
+  local online_payload
+  online_payload=$(cat <<EOF
+{"name":"Vicohome ${camera_name} Online","unique_id":"${device_ident}_online","state_topic":"${telemetry_topic}","availability_topic":"${AVAILABILITY_TOPIC}","payload_available":"online","payload_not_available":"offline","value_template":"{% if value_json.online %}ON{% else %}OFF{% endif %}","payload_on":"ON","payload_off":"OFF","device_class":"connectivity","entity_category":"diagnostic","device":{"identifiers":["${device_ident}"],"name":"Vicohome ${camera_name}","manufacturer":"Vicohome","model":"Camera"}}
 EOF
 )
 
@@ -195,7 +223,7 @@ publish_device_health() {
 
   local online_raw
   online_raw=$(echo "${device_json}" | jq -r '.online // .isOnline // .deviceOnline // empty' 2>/dev/null)
-  local online_json
+  local online_json=""
   if [ -n "${online_raw}" ] && [ "${online_raw}" != "null" ]; then
     case "${online_raw}" in
       true|false)
@@ -238,7 +266,7 @@ publish_device_health() {
   telemetry_payload=$(echo "${device_json}" | jq -c \
     --arg timestamp "${timestamp}" \
     --argjson online "${online_json}" \
-    '{batteryLevel:(.batteryLevel // null), signalStrength:(.signalStrength // null), online:$online, ip:(.ip // ""), timestamp:$timestamp}')
+    '{batteryLevel:(.batteryLevel // .battery_percent // .batteryPercent // .battery // null), signalStrength:(.signalStrength // .signal_strength // .signalDbm // .signal_dbm // .wifiStrength // .rssi // null), online:$online, ip:(.ip // ""), timestamp:$timestamp}')
 
   local telemetry_topic="${BASE_TOPIC}/${safe_id}/telemetry"
   mosquitto_pub ${MQTT_ARGS} \

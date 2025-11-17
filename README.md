@@ -46,6 +46,7 @@ For each Vicohome camera the add-on creates:
 - `sensor.vicohome_<cam>_battery` (percentage)
 - `sensor.vicohome_<cam>_wifi` (signal dBm)
 - `binary_sensor.vicohome_<cam>_online`
+- Shared availability topic so every entity goes `unavailable` if the add-on stops
 
 Plus:
 
