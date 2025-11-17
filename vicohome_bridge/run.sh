@@ -24,6 +24,8 @@ bashio::log.info "  poll_interval = ${POLL_INTERVAL}s"
 bashio::log.info "  base_topic    = ${BASE_TOPIC}"
 bashio::log.info "  log_level     = ${LOG_LEVEL}"
 
+bashio::log.level "${LOG_LEVEL}"
+
 if [ -z "${EMAIL}" ] || [ -z "${PASSWORD}" ]; then
   bashio::log.error "You must set 'email' and 'password' in the add-on configuration."
   exit 1
@@ -138,24 +140,6 @@ EOF
 EOF
 )
 
-  local battery_payload
-  battery_payload=$(cat <<EOF
-{"name":"Vicohome ${camera_name} Battery","unique_id":"${device_ident}_battery","state_topic":"${telemetry_topic}","value_template":"{{ value_json.batteryLevel }}","unit_of_measurement":"%","device_class":"battery","state_class":"measurement","device":{"identifiers":["${device_ident}"],"name":"Vicohome ${camera_name}","manufacturer":"Vicohome","model":"Camera"}}
-EOF
-)
-
-  local wifi_payload
-  wifi_payload=$(cat <<EOF
-{"name":"Vicohome ${camera_name} WiFi","unique_id":"${device_ident}_wifi","state_topic":"${telemetry_topic}","value_template":"{{ value_json.signalStrength }}","unit_of_measurement":"dBm","device_class":"signal_strength","state_class":"measurement","entity_category":"diagnostic","device":{"identifiers":["${device_ident}"],"name":"Vicohome ${camera_name}","manufacturer":"Vicohome","model":"Camera"}}
-EOF
-)
-
-  local online_payload
-  online_payload=$(cat <<EOF
-{"name":"Vicohome ${camera_name} Online","unique_id":"${device_ident}_online","state_topic":"${telemetry_topic}","value_template":"{% if value_json.online %}ON{% else %}OFF{% endif %}","payload_on":"ON","payload_off":"OFF","device_class":"connectivity","entity_category":"diagnostic","device":{"identifiers":["${device_ident}"],"name":"Vicohome ${camera_name}","manufacturer":"Vicohome","model":"Camera"}}
-EOF
-)
-
   mosquitto_pub ${MQTT_ARGS} -t "${sensor_topic}" -m "${sensor_payload}" -q 0 || \
     bashio::log.warning "Failed to publish MQTT discovery config for sensor ${device_ident}_last_event"
 
@@ -217,36 +201,47 @@ publish_device_health() {
 
   local camera_name
   camera_name=$(echo "${device_json}" | jq -r '.deviceName // .camera_name // .camera.name // .cameraName // .title // empty')
+  if [ -z "${camera_name}" ] || [ "${camera_name}" = "null" ]; then
+    camera_name="Camera ${camera_id}"
+  fi
+
+  local display_name="${camera_name}"
 
   local ip_raw
   ip_raw=$(echo "${device_json}" | jq -r '.ip // empty')
 
   local online_raw
   online_raw=$(echo "${device_json}" | jq -r '.online // .isOnline // .deviceOnline // empty' 2>/dev/null)
-  local online_json=""
+  local online_json="false"
+  local online_explicit="false"
   if [ -n "${online_raw}" ] && [ "${online_raw}" != "null" ]; then
     case "${online_raw}" in
       true|false)
         online_json="${online_raw}"
+        online_explicit="true"
         ;;
       1)
         online_json="true"
+        online_explicit="true"
         ;;
       0)
         online_json="false"
+        online_explicit="true"
         ;;
       ON|on|On)
         online_json="true"
+        online_explicit="true"
         ;;
       OFF|off|Off)
         online_json="false"
+        online_explicit="true"
         ;;
       *)
         ;;
     esac
   fi
 
-  if [ -z "${online_json}" ]; then
+  if [ "${online_explicit}" != "true" ]; then
     if [ -n "${ip_raw}" ] && [ "${ip_raw}" != "null" ]; then
       online_json="true"
     else
@@ -267,6 +262,16 @@ publish_device_health() {
     --arg timestamp "${timestamp}" \
     --argjson online "${online_json}" \
     '{batteryLevel:(.batteryLevel // .battery_percent // .batteryPercent // .battery // null), signalStrength:(.signalStrength // .signal_strength // .signalDbm // .signal_dbm // .wifiStrength // .rssi // null), online:$online, ip:(.ip // ""), timestamp:$timestamp}')
+
+  local battery_summary
+  battery_summary=$(echo "${telemetry_payload}" | jq -r 'if .batteryLevel == null then "null" else (.batteryLevel|tostring) end')
+  local signal_summary
+  signal_summary=$(echo "${telemetry_payload}" | jq -r 'if .signalStrength == null then "null" else (.signalStrength|tostring) end')
+  local ip_summary
+  ip_summary=$(echo "${telemetry_payload}" | jq -r '.ip // ""')
+
+  bashio::log.debug "Telemetry summary for ${display_name} (${safe_id}): battery=${battery_summary}, wifi=${signal_summary}, online=${online_json}, ip=${ip_summary}"
+  bashio::log.debug "Telemetry payload for ${safe_id}: ${telemetry_payload}"
 
   local telemetry_topic="${BASE_TOPIC}/${safe_id}/telemetry"
   mosquitto_pub ${MQTT_ARGS} \
@@ -297,6 +302,11 @@ poll_device_health() {
     bashio::log.warning "Device list output was not JSON array, skipping telemetry publish."
     return
   fi
+
+  local device_count
+  device_count=$(echo "${devices_output}" | jq 'length')
+  bashio::log.info "vico-cli devices list returned ${device_count} device(s) for telemetry publishing."
+  bashio::log.debug "Device list payload preview: $(echo "${devices_output}" | tr -d '\n' | head -c 400)"
 
   echo "${devices_output}" | jq -c '.[]' | while read -r device; do
     publish_device_health "${device}"
@@ -361,14 +371,21 @@ while true; do
       fi
 
       CAMERA_NAME=$(echo "${event}" | jq -r '.deviceName // .camera_name // .camera.name // .cameraName // .title // empty')
+      if [ -z "${CAMERA_NAME}" ] || [ "${CAMERA_NAME}" = "null" ]; then
+        CAMERA_NAME="Camera ${CAMERA_ID}"
+      fi
       EVENT_TYPE=$(echo "${event}" | jq -r '.eventType // .type // .event_type // empty')
 
       SAFE_ID=$(sanitize_id "${CAMERA_ID}")
+
+      event_preview=$(echo "${event}" | tr -d '\n' | head -c 400)
+      bashio::log.debug "Event for ${SAFE_ID} (${CAMERA_NAME}) type='${EVENT_TYPE}': ${event_preview}"
 
       ensure_discovery_published "${CAMERA_ID}" "${CAMERA_NAME}"
       publish_event_for_camera "${SAFE_ID}" "${event}"
 
       if [ "${EVENT_TYPE}" = "motion" ] || [ "${EVENT_TYPE}" = "person" ] || [ "${EVENT_TYPE}" = "human" ] || [ "${EVENT_TYPE}" = "bird" ]; then
+        bashio::log.debug "Triggering motion pulse for ${SAFE_ID} because event type '${EVENT_TYPE}' requires it."
         publish_motion_pulse "${SAFE_ID}"
       fi
     done
@@ -384,14 +401,21 @@ while true; do
     fi
 
     CAMERA_NAME=$(echo "${event}" | jq -r '.deviceName // .camera_name // .camera.name // .cameraName // .title // empty')
+    if [ -z "${CAMERA_NAME}" ] || [ "${CAMERA_NAME}" = "null" ]; then
+      CAMERA_NAME="Camera ${CAMERA_ID}"
+    fi
     EVENT_TYPE=$(echo "${event}" | jq -r '.eventType // .type // .event_type // empty')
 
     SAFE_ID=$(sanitize_id "${CAMERA_ID}")
+
+    event_preview=$(echo "${event}" | tr -d '\n' | head -c 400)
+    bashio::log.debug "Event for ${SAFE_ID} (${CAMERA_NAME}) type='${EVENT_TYPE}': ${event_preview}"
 
     ensure_discovery_published "${CAMERA_ID}" "${CAMERA_NAME}"
     publish_event_for_camera "${SAFE_ID}" "${event}"
 
     if [ "${EVENT_TYPE}" = "motion" ] || [ "${EVENT_TYPE}" = "person" ] || [ "${EVENT_TYPE}" = "human" ] || [ "${EVENT_TYPE}" = "bird" ]; then
+      bashio::log.debug "Triggering motion pulse for ${SAFE_ID} because event type '${EVENT_TYPE}' requires it."
       publish_motion_pulse "${SAFE_ID}"
     fi
   fi

@@ -1,5 +1,9 @@
 # Vicohome Bridge Add-on Changelog
 
+## 1.1.8
+- Fixed a regression where the telemetry publisher could crash with an `online_json` error when Vicohome omitted status flags, ensuring the add-on keeps running even with sparse device data.
+- Added detailed debug logging for telemetry and events (and documented how to enable it) so troubleshooting stalled updates is much easier.
+
 ## 1.1.7
 - Added a retained MQTT availability topic and wired every discovery payload to it so Home Assistant marks the entities unavailable whenever the add-on goes offline.
 

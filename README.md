@@ -104,7 +104,7 @@ You should now see **“Vicohome Bridge”** in the add-on list.
    - `password` – bridge account password
    - `poll_interval` – how often to poll for events (seconds)
    - `base_topic` – MQTT base topic (default: `vicohome`)
-   - `log_level` – `debug`, `info`, `warning`, `error` (default: `info`)
+   - `log_level` – `debug`, `info`, `warning`, `error` (default: `info`). Use `debug` when you need extra telemetry/event payload details in the add-on logs.
 
    Example:
 
@@ -146,6 +146,16 @@ Then:
    ```
 
 No manual host/port config is needed in the add-on; it grabs them from the MQTT service automatically.
+
+### Troubleshooting & verbose logging
+
+If you are chasing down missing events or telemetry, edit the add-on configuration and set `log_level` to `debug`. The bridge will:
+
+- Dump previews of every Vicohome event payload that arrives
+- Summarize and log the battery/Wi-Fi/online telemetry pushed to MQTT
+- Include counts and raw previews of each `vico-cli devices list` call
+
+These extra details make it easier to see what the Vicohome cloud is returning and why certain entities may not update.
 
 ---
 
