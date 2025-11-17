@@ -425,6 +425,13 @@ while true; do
     continue
   fi
 
+  if [ ${EXIT_CODE} -eq 0 ] && echo "${JSON_OUTPUT}" | grep -q "No events found"; then
+    bashio::log.info "vico-cli reported no events in the recent window."
+    bootstrap_history_if_needed
+    sleep "${POLL_INTERVAL}"
+    continue
+  fi
+
   bashio::log.info "vico-cli output (first 200 chars): $(echo "${JSON_OUTPUT}" | head -c 200)"
 
   # Quick sanity check so we don't feed clearly non-JSON into jq
