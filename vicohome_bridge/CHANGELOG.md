@@ -1,5 +1,11 @@
 # Vicohome Bridge Add-on Changelog
 
+## 1.2.0
+- Added an optional bootstrap history pull that backfills the most recent event per camera when Vicohome reports no recent activi
+ty, so the Last Event sensors populate even before new motion occurs.
+- Provided a `bootstrap_history` configuration toggle (default `true`) and persisted per-camera markers so the historical publish
+ing only runs once per install unless you disable/delete the data files.
+
 ## 1.1.9
 - Added an automatic MQTT discovery refresh (every ~5 minutes) so Home Assistant recreates Vicohome entities if you delete them or when payloads change over time.
 - Logged the discovery refresh reason to the add-on log for easier troubleshooting when sensors appear to lag behind changes.

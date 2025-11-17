@@ -12,6 +12,9 @@ PASSWORD=$(bashio::config 'password')
 POLL_INTERVAL=$(bashio::config 'poll_interval')
 LOG_LEVEL=$(bashio::config 'log_level')
 BASE_TOPIC=$(bashio::config 'base_topic')
+BOOTSTRAP_HISTORY=$(bashio::config 'bootstrap_history')
+
+[ -z "${BOOTSTRAP_HISTORY}" ] && BOOTSTRAP_HISTORY="true"
 
 # Defaults
 [ -z "${POLL_INTERVAL}" ] && POLL_INTERVAL=60
@@ -212,6 +215,49 @@ publish_motion_pulse() {
   ) &
 }
 
+bootstrap_history_if_needed() {
+  if [ "${BOOTSTRAP_HISTORY}" != "true" ] && [ "${BOOTSTRAP_HISTORY}" != "on" ]; then
+    return 0
+  fi
+
+  if [ -f /data/bootstrap_done ]; then
+    return 0
+  fi
+
+  bashio::log.info "No recent events returned. Running one-time bootstrap history pull..."
+  HIST=$(/usr/local/bin/vico-cli events list --limit 50 --format json 2>/tmp/vico_hist_error.log)
+
+  if ! echo "${HIST}" | jq -e 'type=="array"' >/dev/null 2>&1; then
+    bashio::log.warning "Bootstrap history failed: invalid JSON. stderr (first 200 chars): $(head -c 200 /tmp/vico_hist_error.log 2>/dev/null)"
+    touch /data/bootstrap_done
+    return 0
+  fi
+
+  echo "${HIST}" | jq -c '.[]' | while read -r ev; do
+    CAMID=$(echo "${ev}" | jq -r '.serialNumber // .deviceId // .device_id // .camera_id // .cameraId // .camera.uuid // empty')
+    if [ -z "${CAMID}" ] || [ "${CAMID}" = "null" ]; then
+      continue
+    fi
+
+    SAFE=$(sanitize_id "${CAMID}")
+
+    if [ -f "/data/bootstrap_${SAFE}" ]; then
+      continue
+    fi
+
+    CAMNAME=$(echo "${ev}" | jq -r '.deviceName // .camera_name // .camera.name // .cameraName // .title // empty')
+    ensure_discovery_published "${CAMID}" "${CAMNAME}"
+
+    publish_event_for_camera "${SAFE}" "${ev}"
+
+    touch "/data/bootstrap_${SAFE}"
+    bashio::log.info "Bootstrapped last event for camera ${CAMID} (${SAFE})"
+  done
+
+  touch /data/bootstrap_done
+  bashio::log.info "Bootstrap history complete."
+}
+
 publish_device_health() {
   local device_json="$1"
 
@@ -370,6 +416,13 @@ while true; do
 
   if [ -z "${JSON_OUTPUT}" ] || [ "${JSON_OUTPUT}" = "null" ]; then
     bashio::log.info "vico-cli returned empty or null output (no events or non-JSON)."
+    sleep "${POLL_INTERVAL}"
+    continue
+  fi
+
+  if [ ${EXIT_CODE} -eq 0 ] && echo "${JSON_OUTPUT}" | grep -q "No events found"; then
+    bashio::log.info "vico-cli reported no events in the recent window."
+    bootstrap_history_if_needed
     sleep "${POLL_INTERVAL}"
     continue
   fi
