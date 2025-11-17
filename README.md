@@ -15,12 +15,13 @@ It:
 - Polls the cloud for **events + device info**
 - Publishes JSON events and camera attributes to MQTT
 - Uses **MQTT Discovery** to auto-create entities for each camera
+- Republishes discovery every few minutes so deleted entities get recreated automatically
+- Bootstraps the "Last Event" sensor with the latest historical event when Vicohome reports no recent motion (configurable)
 - Provides a simple **dashboard** with last-event thumbnails and camera health
 
 Tested on:
 
 - Home Assistant OS (aarch64 / Raspberry Pi)
-- Home Assistant OS on x86 mini-PC
 
 ---
 
@@ -47,6 +48,7 @@ For each Vicohome camera the add-on creates:
 - `sensor.vicohome_<cam>_battery` (percentage)
 - `sensor.vicohome_<cam>_wifi` (signal dBm)
 - `binary_sensor.vicohome_<cam>_online`
+- Shared availability topic so every entity goes `unavailable` if the add-on stops
 
 Plus:
 
@@ -104,7 +106,8 @@ You should now see **“Vicohome Bridge”** in the add-on list.
    - `password` – bridge account password
    - `poll_interval` – how often to poll for events (seconds)
    - `base_topic` – MQTT base topic (default: `vicohome`)
-   - `log_level` – `debug`, `info`, `warning`, `error` (default: `info`)
+   - `log_level` – `debug`, `info`, `warning`, `error` (default: `info`). Use `debug` when you need extra telemetry/event payload details in the add-on logs.
+   - `bootstrap_history` – set to `false` to skip the one-time history pull when Vicohome returns "No events found" (default: `true`).
 
    Example:
 
@@ -114,7 +117,8 @@ You should now see **“Vicohome Bridge”** in the add-on list.
      "password": "YOUR_PASSWORD_HERE",
      "poll_interval": 60,
      "base_topic": "vicohome",
-     "log_level": "info"
+     "log_level": "info",
+     "bootstrap_history": true
    }
    ```
 
@@ -146,6 +150,20 @@ Then:
    ```
 
 No manual host/port config is needed in the add-on; it grabs them from the MQTT service automatically.
+
+### Troubleshooting & verbose logging
+
+If you are chasing down missing events or telemetry, edit the add-on configuration and set `log_level` to `debug`. The bridge will:
+
+- Dump previews of every Vicohome event payload that arrives
+- Summarize and log the battery/Wi-Fi/online telemetry pushed to MQTT
+- Include counts and raw previews of each `vico-cli devices list` call
+
+These extra details make it easier to see what the Vicohome cloud is returning and why certain entities may not update.
+
+#### Historical bootstrap for Last Event sensors
+
+When `vico-cli` reports `No events found in the specified time period.`, the add-on performs a **one-time history pull** (up to 50 events) and publishes the most recent event per camera so your Last Event sensors are populated immediately. This behavior is on by default but can be disabled via the `bootstrap_history` option if you prefer to wait for brand new events.
 
 ---
 
@@ -182,6 +200,7 @@ By default the add-on:
   - `vicohome/<safe_camera_id>/events`
   - `vicohome/<safe_camera_id>/state`
   - `vicohome/<safe_camera_id>/motion` (`ON`/`OFF`)
+  - `vicohome/<safe_camera_id>/telemetry` (battery/WiFi/online details)
 
 - Registers MQTT Discovery entries for:
 
@@ -450,6 +469,8 @@ Possible causes:
 
 If you changed the add-on version or discovery IDs at some point, Home Assistant may still have **old** MQTT entities.
 
+As of v1.1.9 the add-on automatically refreshes the MQTT discovery payloads every few minutes. If you delete a Vicohome entity or device from Home Assistant, it should reappear shortly after telemetry or an event arrives.
+
 Fix:
 
 1. Stop the **Vicohome Bridge** add-on.
@@ -459,7 +480,7 @@ Fix:
 4. Reload the MQTT integration (Configure → Reload).
 5. Start the **Vicohome Bridge** add-on again.
 
-It will republish discovery with the current IDs, and HA will create fresh entities.
+The forced restart is rarely necessary now, but it guarantees Home Assistant clears out the stale MQTT topics before the bridge republishes discovery with the current IDs.
 
 ---
 
