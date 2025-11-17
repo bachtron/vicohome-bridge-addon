@@ -16,7 +16,7 @@ It:
 - Publishes JSON events and camera attributes to MQTT
 - Uses **MQTT Discovery** to auto-create entities for each camera
 - Republishes discovery every few minutes so deleted entities get recreated automatically
-- Bootstraps the "Last Event" sensor with the latest historical event when Vicohome reports no recent motion (configurable)
+- Performs a one-time history bootstrap when Vicohome reports no recent motion so Last Event sensors populate even before new motion (configurable)
 - Provides a simple **dashboard** with last-event thumbnails and camera health
 
 Tested on:
@@ -163,7 +163,7 @@ These extra details make it easier to see what the Vicohome cloud is returning a
 
 #### Historical bootstrap for Last Event sensors
 
-When `vico-cli` reports `No events found in the specified time period.`, the add-on performs a **one-time history pull** (up to 50 events) and publishes the most recent event per camera so your Last Event sensors are populated immediately. This behavior is on by default but can be disabled via the `bootstrap_history` option if you prefer to wait for brand new events.
+When `vico-cli` reports `No events found in the specified time period.`, the add-on performs a **one-time history pull** (last ~5 days) and replays those events to MQTT just like live motion. This ensures your Last Event sensors and automations have recent context even before fresh motion occurs. Disable `bootstrap_history` if you prefer to wait for brand new events instead of replaying history.
 
 ---
 

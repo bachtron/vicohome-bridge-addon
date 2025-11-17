@@ -1,5 +1,11 @@
 # Vicohome Bridge Add-on Changelog
 
+## 1.2.2
+- Extended the bootstrap history pull to cover the last 5 days of Vicohome activity so Last Event sensors populate even when your account has been idle for more than a day.
+
+## 1.2.1
+- Reworked the bootstrap history fallback to use an in-memory flag and replay the last 24 hours of Vicohome events whenever `vico-cli` reports no recent motion, ensuring the normal MQTT workflows run even during the bootstrap phase.
+
 ## 1.2.0
 - Added an optional bootstrap history pull that backfills the most recent event per camera when Vicohome reports no recent activi
 ty, so the Last Event sensors populate even before new motion occurs.
