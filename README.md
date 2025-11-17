@@ -15,6 +15,7 @@ It:
 - Polls the cloud for **events + device info**
 - Publishes JSON events and camera attributes to MQTT
 - Uses **MQTT Discovery** to auto-create entities for each camera
+- Republishes discovery every few minutes so deleted entities get recreated automatically
 - Provides a simple **dashboard** with last-event thumbnails and camera health
 
 Tested on:
@@ -461,6 +462,8 @@ Possible causes:
 
 If you changed the add-on version or discovery IDs at some point, Home Assistant may still have **old** MQTT entities.
 
+As of v1.1.9 the add-on automatically refreshes the MQTT discovery payloads every few minutes. If you delete a Vicohome entity or device from Home Assistant, it should reappear shortly after telemetry or an event arrives.
+
 Fix:
 
 1. Stop the **Vicohome Bridge** add-on.
@@ -470,7 +473,7 @@ Fix:
 4. Reload the MQTT integration (Configure → Reload).
 5. Start the **Vicohome Bridge** add-on again.
 
-It will republish discovery with the current IDs, and HA will create fresh entities.
+The forced restart is rarely necessary now, but it guarantees Home Assistant clears out the stale MQTT topics before the bridge republishes discovery with the current IDs.
 
 ---
 

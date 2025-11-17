@@ -1,5 +1,9 @@
 # Vicohome Bridge Add-on Changelog
 
+## 1.1.9
+- Added an automatic MQTT discovery refresh (every ~5 minutes) so Home Assistant recreates Vicohome entities if you delete them or when payloads change over time.
+- Logged the discovery refresh reason to the add-on log for easier troubleshooting when sensors appear to lag behind changes.
+
 ## 1.1.8
 - Fixed a regression where the telemetry publisher could crash with an `online_json` error when Vicohome omitted status flags, ensuring the add-on keeps running even with sparse device data.
 - Added detailed debug logging for telemetry and events (and documented how to enable it) so troubleshooting stalled updates is much easier.

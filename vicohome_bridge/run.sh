@@ -18,6 +18,8 @@ BASE_TOPIC=$(bashio::config 'base_topic')
 [ -z "${LOG_LEVEL}" ] && LOG_LEVEL="info"
 [ -z "${BASE_TOPIC}" ] && BASE_TOPIC="vicohome"
 AVAILABILITY_TOPIC="${BASE_TOPIC}/bridge/status"
+# How often (in seconds) to refresh MQTT discovery payloads so deleted entities get recreated.
+DISCOVERY_REFRESH_SECONDS=300
 
 bashio::log.info "Vicohome Bridge configuration:"
 bashio::log.info "  poll_interval = ${POLL_INTERVAL}s"
@@ -85,12 +87,29 @@ ensure_discovery_published() {
   local safe_id
   safe_id=$(sanitize_id "${camera_id}")
 
-  # v3 marker file so we only publish discovery once per camera_id
+  local publish_required="true"
   local marker="/data/cameras_seen_v3_${safe_id}"
+  local now
+  now=$(date +%s)
+  local refresh_reason="initial publish"
+
   if [ -f "${marker}" ]; then
+    local last_touch
+    last_touch=$(stat -c %Y "${marker}" 2>/dev/null || echo 0)
+    local age=$((now - last_touch))
+
+    if [ "${age}" -lt "${DISCOVERY_REFRESH_SECONDS}" ]; then
+      publish_required="false"
+    else
+      refresh_reason="${age}s since last publish exceeded ${DISCOVERY_REFRESH_SECONDS}s refresh window"
+    fi
+  fi
+
+  if [ "${publish_required}" != "true" ]; then
     return 0
   fi
-  touch "${marker}"
+
+  bashio::log.debug "Publishing MQTT discovery for ${safe_id} (${camera_name}): ${refresh_reason}."
 
   # v3 device identifier / unique_id base
   local device_ident="vicohome_camera_v3_${safe_id}"
@@ -154,6 +173,10 @@ EOF
 
   mosquitto_pub ${MQTT_ARGS} -t "${online_config_topic}" -m "${online_payload}" -q 0 || \
     bashio::log.warning "Failed to publish MQTT discovery config for binary_sensor ${device_ident}_online"
+
+  if ! touch "${marker}"; then
+    bashio::log.warning "Failed to update discovery marker ${marker}; discovery refresh scheduling may misbehave."
+  fi
 }
 
 publish_event_for_camera() {
