@@ -19,6 +19,7 @@ import (
 var Version = "dev"
 
 var cfgFile string
+var regionFlag string
 
 var rootCmd = &cobra.Command{
 	Use:   "vico-cli",
@@ -47,9 +48,13 @@ var versionCmd = &cobra.Command{
 }
 
 func init() {
-	// No persistent flags needed
+	rootCmd.PersistentFlags().StringVar(&regionFlag, "region", "", "Vicohome region (auto, us, eu, or custom host)")
+	rootCmd.PersistentPreRun = func(cmd *cobra.Command, args []string) {
+		if regionFlag != "" {
+			os.Setenv("VICOHOME_REGION", regionFlag)
+		}
+	}
 
-	// Add the commands
 	rootCmd.AddCommand(devices.GetDevicesCmd())
 	rootCmd.AddCommand(events.GetEventsCmd())
 	rootCmd.AddCommand(versionCmd)

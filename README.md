@@ -107,7 +107,10 @@ You should now see **“Vicohome Bridge”** in the add-on list.
    - `poll_interval` – how often to poll for events (seconds)
    - `base_topic` – MQTT base topic (default: `vicohome`)
    - `log_level` – `debug`, `info`, `warning`, `error` (default: `info`). Use `debug` when you need extra telemetry/event payload details in the add-on logs.
+  - `region` / `api_base` – Vicohome shard overrides. `region` defaults to `auto` (US). Set `region: eu` if your bridge account lives on the EU shard, or leave it on `auto` and instead supply a full custom URL via `api_base`.
    - `bootstrap_history` – set to `false` to skip the one-time history pull when Vicohome returns "No events found" (default: `true`).
+   - `webrtc_enabled` / `webrtc_mode` / `webrtc_poll_interval` – opt-in controls for the experimental WebRTC ticket export (see below). By default WebRTC support is disabled; enable it only if you plan to consume tickets with go2rtc or another P2P helper.
+   - `go2rtc_enabled` / `go2rtc_url` / `go2rtc_stream_prefix` – optional HTTP bridge to a go2rtc instance (default host: `http://go2rtc:1984/api/stream`). When enabled the add-on POSTs every ticket to that endpoint using the naming convention `vicohome_<safe_id>`.
 
    Example:
 
@@ -127,6 +130,14 @@ You should now see **“Vicohome Bridge”** in the add-on list.
    - **Start on boot**
    - **Watchdog**
 6. Click **Start**.
+
+#### Vicohome regions & troubleshooting
+
+- `region` accepts `auto` (default), `us`, or `eu`. `auto` resolves to the US cloud unless you also provide a full `api_base` URL.
+- EU accounts should explicitly set `region: eu` so every `vico-cli` command and MQTT payload targets `https://api-eu.vicoo.tech`.
+- Custom/white-label deployments can leave `region: auto` and instead point `api_base` to the desired Vicohome host.
+- On startup the add-on logs both the configured region and the resolved API host, making it easy to confirm which shard is in use.
+- **Troubleshooting:** if the logs ever show `ACCOUNT_NOT_REGISTERED (-1001)`, double-check your bridge account email/password and try changing the `region` option (for example, from `auto` to `eu`). That error almost always means the Vicohome shard/region does not match your account.
 
 ---
 
@@ -201,6 +212,7 @@ By default the add-on:
   - `vicohome/<safe_camera_id>/state`
   - `vicohome/<safe_camera_id>/motion` (`ON`/`OFF`)
   - `vicohome/<safe_camera_id>/telemetry` (battery/WiFi/online details)
+  - (Optional) `vicohome/<safe_camera_id>/webrtc_request` / `webrtc_ticket` / `webrtc_status` when the experimental WebRTC export is enabled.
 
 - Registers MQTT Discovery entries for:
 
@@ -222,6 +234,77 @@ The **Last Event** sensor exposes attributes such as:
 - and other fields from the Vicohome API.
 
 All of this data ultimately comes from `vico-cli` – this add-on just forwards and reshapes it.
+
+---
+
+## Experimental: P2P / WebRTC ticket export
+
+The add-on now exposes the WebRTC / P2P "ticket" data that the latest `vico-cli` can request from Vicohome. When enabled it will run `vico-cli webrtc ticket --serial <camera_id> --format json`, enrich the JSON with metadata, and publish the payload to MQTT so an external tool (go2rtc, a custom script, etc.) can start a direct session.
+
+### Configuration knobs
+
+- `webrtc_enabled` – opt-in gate (default: `false`). Nothing WebRTC-related runs unless this is `true`.
+- `webrtc_mode` – `off`, `poll`, or `on_demand` (default: `on_demand`).
+  - `on_demand`: the add-on listens for MQTT requests and only wakes cameras when you ask for a ticket (best for battery cams).
+  - `poll`: fetch a fresh ticket for every known camera every `webrtc_poll_interval` seconds.
+  - `off`: keep everything disabled even if `webrtc_enabled` is `true`.
+- `webrtc_poll_interval` – seconds between poll runs (default 120s). Ignored unless `webrtc_mode` = `poll`.
+
+### MQTT topics & workflow
+
+For each camera (identified by the existing `<safe_id>` that shows up in `vicohome/<safe_id>/state`):
+
+- `vicohome/<safe_id>/webrtc_request` – publish any payload (even an empty string) to this topic to trigger an on-demand ticket fetch. Used only when `webrtc_mode` = `on_demand`.
+- `vicohome/<safe_id>/webrtc_ticket` – receives the JSON ticket plus helper fields (`camera_id`, `deviceName`, `ts`). Tickets are **not retained** because they expire quickly.
+- `vicohome/<safe_id>/webrtc_status` – optional status messages (e.g. `{"status":"ok","message":"ticket published ..."}`) so automations can tell success vs failure.
+
+Every payload references the same `<safe_id>` / `camera_id` that MQTT discovery already uses. Use the `vicohome_<safe_id>` naming convention when defining go2rtc sources so everything lines up.
+
+### Basic go2rtc tie-in idea
+
+The add-on intentionally stops at "publish the ticket" – you are free to wire it into go2rtc however you prefer. One pattern is:
+
+1. Run in `on_demand` mode so you only wake cameras when a viewer connects.
+2. Have go2rtc (or an HA automation) publish an empty payload to `vicohome/front_driveway/webrtc_request` when it needs a fresh ticket.
+3. Listen for `vicohome/front_driveway/webrtc_ticket`, parse the JSON, and call go2rtc's HTTP API to update a custom `webrtc` source:
+
+   ```yaml
+   # Pseudo automation
+   trigger:
+     - platform: mqtt
+       topic: "vicohome/front_driveway/webrtc_ticket"
+   action:
+     - service: rest_command.go2rtc_apply_ticket
+       data:
+         payload: "{{ trigger.payload }}"  # forward ticket JSON to your helper script / go2rtc endpoint
+   ```
+
+4. Configure go2rtc with a source named `vicohome_front_driveway` that expects those tickets.
+
+Feel free to adapt the pattern: the add-on simply guarantees that requests go in via `/webrtc_request` and tickets come out via `/webrtc_ticket`, leaving the rest to your automations. Remember that frequent polling may drain batteries, so `on_demand` mode is recommended unless you have cameras on constant power.
+
+### Optional go2rtc POSTs
+
+If you also enable the `go2rtc_enabled` option, every ticket that gets published to MQTT is mirrored to `http://go2rtc:1984/api/stream` (override via `go2rtc_url`). The payload matches this structure:
+
+```json
+{
+  "name": "vicohome_front_driveway",
+  "safe_id": "front_driveway",
+  "camera_id": "SERIAL123",
+  "camera_name": "Front Driveway",
+  "ts": "2024-05-01T12:34:56Z",
+  "ticket": { ...raw `vico-cli webrtc ticket` JSON... }
+}
+```
+
+The `name` comes from `go2rtc_stream_prefix + <safe_id>` so it lines up with the MQTT discovery naming. go2rtc accepts the POST and can use the embedded `ticket` JSON to refresh a `webrtc` input via automations, scripts, or a custom go2rtc build. A simple workflow:
+
+1. Enable `webrtc_enabled: true`, `webrtc_mode: on_demand`, and `go2rtc_enabled: true`.
+2. Have go2rtc (or an automation) publish to `vicohome/<safe_id>/webrtc_request` when a viewer connects.
+3. go2rtc receives the mirrored POST with the full ticket JSON and can update a stream named `vicohome_<safe_id>` without needing another MQTT listener.
+
+You can continue to consume the MQTT ticket topic in parallel; the HTTP POST is just a convenience so go2rtc-based setups have a consistent entry point even if they cannot subscribe to MQTT directly.
 
 ---
 
