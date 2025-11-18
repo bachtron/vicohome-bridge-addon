@@ -107,7 +107,8 @@ func listDevices(token string) ([]Device, error) {
 		return nil, fmt.Errorf("error marshaling request: %w", err)
 	}
 
-	httpReq, err := http.NewRequest("POST", "https://api-us.vicohome.io/device/listuserdevices", bytes.NewBuffer(reqBody))
+	baseURL := auth.GetAPIBaseURL()
+	httpReq, err := http.NewRequest("POST", baseURL+"/device/listuserdevices", bytes.NewBuffer(reqBody))
 	if err != nil {
 		return nil, fmt.Errorf("error creating request: %w", err)
 	}

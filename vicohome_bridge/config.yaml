@@ -21,6 +21,8 @@ options:
   poll_interval: 60
   log_level: "info"
   base_topic: "vicohome"
+  region: "us"
+  api_base: ""
   bootstrap_history: true
 
 schema:
@@ -29,4 +31,6 @@ schema:
   poll_interval: int?
   log_level: list(debug|info|warning|error)?
   base_topic: str?
+  region: str?
+  api_base: str?
   bootstrap_history: bool?
