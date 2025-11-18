@@ -1,5 +1,10 @@
 # Vicohome Bridge Add-on Changelog
 
+## 1.3.0
+- Added a MQTT command channel (`<base>/<camera>/cmd/live_on|live_off`) that leverages Vicohome's documented P2P/WebRTC endpoints to fetch tickets on demand and publish them to `<base>/<camera>/webrtc_ticket`, plus per-camera `p2p_status` updates so go2rtc/custom bridges can drive live view sessions without custom code.
+- Extended the bundled `vico-cli` binary with a new `p2p` command group (session + close helpers) so the add-on calls `open-p2p-connection`, `get-webrtc-ticket`, and `close-p2p-connection` using the official API.
+- Cached per-camera metadata and started a background MQTT listener to keep live view commands responsive while the normal telemetry/event polling loop continues to run.
+
 ## 1.2.2
 - Extended the bootstrap history pull to cover the last 5 days of Vicohome activity so Last Event sensors populate even when your account has been idle for more than a day.
 
