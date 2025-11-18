@@ -141,7 +141,12 @@ func parseTimestamp(timestamp string) (time.Time, error) {
 }
 
 func init() {
-	currentTime := time.Now()
+	// Use UTC when generating the default window so the parsed timestamps
+	// match the actual current time regardless of the host's timezone. When we
+	// previously formatted the defaults in the local timezone (e.g. America/Los_Angeles)
+	// but parsed them as UTC, the effective window ended several hours in the past,
+	// preventing the bridge from ever seeing the most recent events.
+	currentTime := time.Now().UTC()
 	defaultStart := currentTime.Add(-24 * time.Hour).Format("2006-01-02 15:04:05")
 	defaultEnd := currentTime.Format("2006-01-02 15:04:05")
 
