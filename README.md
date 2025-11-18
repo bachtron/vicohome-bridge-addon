@@ -15,12 +15,14 @@ It:
 - Polls the cloud for **events + device info**
 - Publishes JSON events and camera attributes to MQTT
 - Uses **MQTT Discovery** to auto-create entities for each camera
+- Republishes discovery every few minutes so deleted entities get recreated automatically
+- Performs a one-time history bootstrap when Vicohome reports no recent motion so Last Event sensors populate even before new motion (configurable)
+- Listens for MQTT commands to fetch official Vicohome P2P/WebRTC tickets so you can hand them to go2rtc or another bridge for live view
 - Provides a simple **dashboard** with last-event thumbnails and camera health
 
 Tested on:
 
 - Home Assistant OS (aarch64 / Raspberry Pi)
-- Home Assistant OS on x86 mini-PC
 
 ---
 
@@ -47,6 +49,7 @@ For each Vicohome camera the add-on creates:
 - `sensor.vicohome_<cam>_battery` (percentage)
 - `sensor.vicohome_<cam>_wifi` (signal dBm)
 - `binary_sensor.vicohome_<cam>_online`
+- Shared availability topic so every entity goes `unavailable` if the add-on stops
 
 Plus:
 
@@ -104,7 +107,8 @@ You should now see **“Vicohome Bridge”** in the add-on list.
    - `password` – bridge account password
    - `poll_interval` – how often to poll for events (seconds)
    - `base_topic` – MQTT base topic (default: `vicohome`)
-   - `log_level` – `debug`, `info`, `warning`, `error` (default: `info`)
+   - `log_level` – `debug`, `info`, `warning`, `error` (default: `info`). Use `debug` when you need extra telemetry/event payload details in the add-on logs.
+   - `bootstrap_history` – set to `false` to skip the one-time history pull when Vicohome returns "No events found" (default: `true`).
 
    Example:
 
@@ -114,7 +118,8 @@ You should now see **“Vicohome Bridge”** in the add-on list.
      "password": "YOUR_PASSWORD_HERE",
      "poll_interval": 60,
      "base_topic": "vicohome",
-     "log_level": "info"
+     "log_level": "info",
+     "bootstrap_history": true
    }
    ```
 
@@ -146,6 +151,20 @@ Then:
    ```
 
 No manual host/port config is needed in the add-on; it grabs them from the MQTT service automatically.
+
+### Troubleshooting & verbose logging
+
+If you are chasing down missing events or telemetry, edit the add-on configuration and set `log_level` to `debug`. The bridge will:
+
+- Dump previews of every Vicohome event payload that arrives
+- Summarize and log the battery/Wi-Fi/online telemetry pushed to MQTT
+- Include counts and raw previews of each `vico-cli devices list` call
+
+These extra details make it easier to see what the Vicohome cloud is returning and why certain entities may not update.
+
+#### Historical bootstrap for Last Event sensors
+
+When `vico-cli` reports `No events found in the specified time period.`, the add-on performs a **one-time history pull** (last ~5 days) and replays those events to MQTT just like live motion. This ensures your Last Event sensors and automations have recent context even before fresh motion occurs. Disable `bootstrap_history` if you prefer to wait for brand new events instead of replaying history.
 
 ---
 
@@ -182,6 +201,9 @@ By default the add-on:
   - `vicohome/<safe_camera_id>/events`
   - `vicohome/<safe_camera_id>/state`
   - `vicohome/<safe_camera_id>/motion` (`ON`/`OFF`)
+  - `vicohome/<safe_camera_id>/telemetry` (battery/WiFi/online details)
+  - `vicohome/<safe_camera_id>/webrtc_ticket` (latest ticket JSON)
+  - `vicohome/<safe_camera_id>/p2p_status` (JSON status updates for the live stream helper)
 
 - Registers MQTT Discovery entries for:
 
@@ -203,6 +225,18 @@ The **Last Event** sensor exposes attributes such as:
 - and other fields from the Vicohome API.
 
 All of this data ultimately comes from `vico-cli` – this add-on just forwards and reshapes it.
+
+### Live view / WebRTC tickets
+
+The add-on now exposes a lightweight MQTT command channel for Vicohome's official P2P/WebRTC flow (documented in the [`open-p2p-connection`, `get-webrtc-ticket`, and `close-p2p-connection` discovery files at commit `67164de`](https://github.com/dydx/vico-cli/tree/67164debd60ff658237da8b3047da9a9e08e6bb5/endpoints)).
+
+- Send `vicohome/<safe_camera_id>/cmd/live_on` to open a P2P session and fetch the latest ticket for that camera.
+  - Optional payload: `{"stream": "sub"}` to request the SUB stream instead of MAIN (defaults to MAIN).
+- Read the ticket JSON (as returned by `getWebrtcTicket`) from `vicohome/<safe_camera_id>/webrtc_ticket` and hand it to go2rtc, a custom bridge, etc.
+- Watch `vicohome/<safe_camera_id>/p2p_status` for JSON state updates like `starting`, `ticket`, `error`, `closed`.
+- When you're done viewing, publish `vicohome/<safe_camera_id>/cmd/live_off` to call Vicohome's close endpoint and free the session.
+
+Every `live_on` request uses the new `vico-cli p2p session` helper, which opens the P2P connection, retrieves the ticket, and logs the raw response. The add-on never bypasses Vicohome's cloud — it simply exposes those documented endpoints through MQTT so the rest of your stack can consume them.
 
 ---
 
@@ -450,6 +484,8 @@ Possible causes:
 
 If you changed the add-on version or discovery IDs at some point, Home Assistant may still have **old** MQTT entities.
 
+As of v1.1.9 the add-on automatically refreshes the MQTT discovery payloads every few minutes. If you delete a Vicohome entity or device from Home Assistant, it should reappear shortly after telemetry or an event arrives.
+
 Fix:
 
 1. Stop the **Vicohome Bridge** add-on.
@@ -459,7 +495,7 @@ Fix:
 4. Reload the MQTT integration (Configure → Reload).
 5. Start the **Vicohome Bridge** add-on again.
 
-It will republish discovery with the current IDs, and HA will create fresh entities.
+The forced restart is rarely necessary now, but it guarantees Home Assistant clears out the stale MQTT topics before the bridge republishes discovery with the current IDs.
 
 ---
 
