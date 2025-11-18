@@ -17,6 +17,7 @@ It:
 - Uses **MQTT Discovery** to auto-create entities for each camera
 - Republishes discovery every few minutes so deleted entities get recreated automatically
 - Performs a one-time history bootstrap when Vicohome reports no recent motion so Last Event sensors populate even before new motion (configurable)
+- Listens for MQTT commands to fetch official Vicohome P2P/WebRTC tickets so you can hand them to go2rtc or another bridge for live view
 - Provides a simple **dashboard** with last-event thumbnails and camera health
 
 Tested on:
@@ -225,6 +226,18 @@ The **Last Event** sensor exposes attributes such as:
 - and other fields from the Vicohome API.
 
 All of this data ultimately comes from `vico-cli` – this add-on just forwards and reshapes it.
+
+### Live view / WebRTC tickets
+
+The add-on now exposes a lightweight MQTT command channel for Vicohome's official P2P/WebRTC flow (documented in the [`open-p2p-connection`, `get-webrtc-ticket`, and `close-p2p-connection` discovery files at commit `67164de`](https://github.com/dydx/vico-cli/tree/67164debd60ff658237da8b3047da9a9e08e6bb5/endpoints)).
+
+- Send `vicohome/<safe_camera_id>/cmd/live_on` to open a P2P session and fetch the latest ticket for that camera.
+  - Optional payload: `{"stream": "sub"}` to request the SUB stream instead of MAIN (defaults to MAIN).
+- Read the ticket JSON (as returned by `getWebrtcTicket`) from `vicohome/<safe_camera_id>/webrtc_ticket` and hand it to go2rtc, a custom bridge, etc.
+- Watch `vicohome/<safe_camera_id>/p2p_status` for JSON state updates like `starting`, `ticket`, `error`, `closed`.
+- When you're done viewing, publish `vicohome/<safe_camera_id>/cmd/live_off` to call Vicohome's close endpoint and free the session.
+
+Every `live_on` request uses the new `vico-cli p2p session` helper, which opens the P2P connection, retrieves the ticket, and logs the raw response. The add-on never bypasses Vicohome's cloud — it simply exposes those documented endpoints through MQTT so the rest of your stack can consume them.
 
 ---
 
