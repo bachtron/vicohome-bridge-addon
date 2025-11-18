@@ -187,6 +187,12 @@ remember_camera_metadata() {
     '{camera_id:$camera_id,camera_name:$camera_name}' >"${map_file}" 2>/dev/null || true
 }
 
+# Backwards-compatible alias for earlier helper name that other scripts or
+# persisted state may still reference in sourced snippets/logs.
+cache_camera_metadata() {
+  remember_camera_metadata "$@"
+}
+
 load_camera_metadata() {
   local safe_id="$1"
   local id_var="$2"
