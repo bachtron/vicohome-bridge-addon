@@ -1,6 +1,6 @@
 name: "Vicohome Bridge"
 slug: "vicohome_bridge"
-version: "1.3.0"
+version: "1.4.0"
 description: "Home Assistant add-on that wraps the vico-cli Vicohome client and publishes events to MQTT with per-camera topics and MQTT discovery."
 url: "https://github.com/KIWIDUDE564/vicohome-bridge-addon"
 changelog: "https://github.com/KIWIDUDE564/vicohome-bridge-addon/blob/main/vicohome_bridge/CHANGELOG.md"
@@ -24,6 +24,9 @@ options:
   region: "us"
   api_base: ""
   bootstrap_history: true
+  webrtc_enabled: false
+  webrtc_mode: "on_demand"
+  webrtc_poll_interval: 120
 
 schema:
   email: str
@@ -34,3 +37,6 @@ schema:
   region: str?
   api_base: str?
   bootstrap_history: bool?
+  webrtc_enabled: bool?
+  webrtc_mode: list(off|poll|on_demand)?
+  webrtc_poll_interval: int?

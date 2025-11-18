@@ -1,5 +1,10 @@
 # Vicohome Bridge Add-on Changelog
 
+## 1.4.0
+- Added experimental WebRTC / P2P ticket export so power users can request Vicohome tickets over MQTT and hand them to go2rtc (or other tooling) without modifying the add-on image.
+- Introduced `webrtc_enabled`, `webrtc_mode`, and `webrtc_poll_interval` configuration options plus matching MQTT request/ticket/status topics while keeping the feature opt-in by default.
+- Documented the go2rtc tie-in pattern and WebRTC topic schema in the README so integrators have a consistent naming convention (`vicohome_<safe_id>` streams).
+
 ## 1.3.0
 - Added regional awareness to `vico-cli` so the bridge can authenticate and poll either the US or EU Vicohome shards (or any
   fully-qualified custom API host) based on the new configuration options.

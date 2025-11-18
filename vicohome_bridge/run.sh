@@ -15,6 +15,9 @@ BASE_TOPIC=$(bashio::config 'base_topic')
 REGION=$(bashio::config 'region')
 API_BASE=$(bashio::config 'api_base')
 BOOTSTRAP_HISTORY=$(bashio::config 'bootstrap_history')
+WEBRTC_ENABLED=$(bashio::config 'webrtc_enabled')
+WEBRTC_MODE=$(bashio::config 'webrtc_mode')
+WEBRTC_POLL_INTERVAL=$(bashio::config 'webrtc_poll_interval')
 
 [ -z "${BOOTSTRAP_HISTORY}" ] && BOOTSTRAP_HISTORY="true"
 HAS_BOOTSTRAPPED="false"
@@ -30,6 +33,36 @@ fi
 if [ -z "${API_BASE}" ] || [ "${API_BASE}" = "null" ]; then
   API_BASE=""
 fi
+if [ -z "${WEBRTC_ENABLED}" ] || [ "${WEBRTC_ENABLED}" = "null" ]; then
+  WEBRTC_ENABLED="false"
+fi
+if [ -z "${WEBRTC_MODE}" ] || [ "${WEBRTC_MODE}" = "null" ]; then
+  WEBRTC_MODE="on_demand"
+fi
+WEBRTC_MODE=$(echo "${WEBRTC_MODE}" | tr '[:upper:]' '[:lower:]')
+case "${WEBRTC_MODE}" in
+  off|poll|on_demand)
+    ;;
+  *)
+    bashio::log.warning "Unknown webrtc_mode '${WEBRTC_MODE}', defaulting to on_demand."
+    WEBRTC_MODE="on_demand"
+    ;;
+esac
+if [ -z "${WEBRTC_POLL_INTERVAL}" ] || [ "${WEBRTC_POLL_INTERVAL}" = "null" ]; then
+  WEBRTC_POLL_INTERVAL=120
+fi
+if ! echo "${WEBRTC_POLL_INTERVAL}" | grep -Eq '^[0-9]+$'; then
+  WEBRTC_POLL_INTERVAL=120
+fi
+if [ "${WEBRTC_POLL_INTERVAL}" -le 0 ]; then
+  WEBRTC_POLL_INTERVAL=120
+fi
+WEBRTC_ACTIVE="false"
+if [ "${WEBRTC_ENABLED}" = "true" ] && [ "${WEBRTC_MODE}" != "off" ]; then
+  WEBRTC_ACTIVE="true"
+fi
+WEBRTC_LAST_POLL=0
+WEBRTC_SUB_PID=""
 AVAILABILITY_TOPIC="${BASE_TOPIC}/bridge/status"
 # How often (in seconds) to refresh MQTT discovery payloads so deleted entities get recreated.
 DISCOVERY_REFRESH_SECONDS=300
@@ -44,12 +77,21 @@ if [ -n "${API_BASE}" ]; then
 else
   bashio::log.info "  api_base      = <auto>"
 fi
+bashio::log.info "  webrtc_enabled = ${WEBRTC_ENABLED}"
+bashio::log.info "  webrtc_mode    = ${WEBRTC_MODE}"
+bashio::log.info "  webrtc_poll_interval = ${WEBRTC_POLL_INTERVAL}s"
 
 API_BASE_LOG="${API_BASE}"
 if [ -z "${API_BASE_LOG}" ]; then
   API_BASE_LOG="<none>"
 fi
 bashio::log.info "Vicohome region = ${REGION}, api_base override = ${API_BASE_LOG}"
+
+if [ "${WEBRTC_ACTIVE}" = "true" ]; then
+  bashio::log.info "WEBRTC: Enabled (mode=${WEBRTC_MODE}, poll_interval=${WEBRTC_POLL_INTERVAL}s)"
+else
+  bashio::log.info "WEBRTC: Disabled (set webrtc_enabled=true to opt in)."
+fi
 
 bashio::log.level "${LOG_LEVEL}"
 
@@ -84,20 +126,15 @@ publish_availability() {
     || bashio::log.warning "Failed to publish availability state '${state}' to ${AVAILABILITY_TOPIC}"
 }
 
-stop_command_listener() {
-  if [ -n "${COMMAND_LISTENER_PID}" ]; then
-    kill "${COMMAND_LISTENER_PID}" 2>/dev/null || true
-    wait "${COMMAND_LISTENER_PID}" 2>/dev/null || true
-    COMMAND_LISTENER_PID=""
+cleanup() {
+  publish_availability offline
+  if [ -n "${WEBRTC_SUB_PID}" ] && kill -0 "${WEBRTC_SUB_PID}" 2>/dev/null; then
+    kill "${WEBRTC_SUB_PID}" 2>/dev/null
+    wait "${WEBRTC_SUB_PID}" 2>/dev/null
   fi
 }
 
-cleanup_bridge() {
-  stop_command_listener
-  publish_availability offline
-}
-
-trap cleanup_bridge EXIT
+trap cleanup EXIT
 publish_availability online
 
 # ==========================
@@ -114,6 +151,8 @@ if [ -n "${API_BASE}" ]; then
 fi
 
 mkdir -p /data
+CAMERA_MAP_DIR="/data/camera_map"
+mkdir -p "${CAMERA_MAP_DIR}"
 
 # ==========================
 #  Helper functions
@@ -123,60 +162,213 @@ sanitize_id() {
   echo "$1" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9]/_/g'
 }
 
-cache_camera_metadata() {
+remember_camera_metadata() {
   local camera_id="$1"
-  local safe_id="$2"
-  local camera_name="$3"
+  local camera_name="$2"
 
-  if [ -z "${safe_id}" ]; then
-    safe_id=$(sanitize_id "${camera_id}")
+  if [ -z "${camera_id}" ] || [ "${camera_id}" = "null" ]; then
+    return
   fi
-
-  [ -z "${safe_id}" ] && return
 
   if [ -z "${camera_name}" ] || [ "${camera_name}" = "null" ]; then
     camera_name="Camera ${camera_id}"
   fi
 
-  local map_file="/data/camera_map_${safe_id}"
-  printf '%s|%s' "${camera_id}" "${camera_name}" >"${map_file}" 2>/dev/null || true
+  local safe_id
+  safe_id=$(sanitize_id "${camera_id}")
+  if [ -z "${safe_id}" ]; then
+    return
+  fi
+
+  local map_file="${CAMERA_MAP_DIR}/${safe_id}.json"
+  jq -n \
+    --arg camera_id "${camera_id}" \
+    --arg camera_name "${camera_name}" \
+    '{camera_id:$camera_id,camera_name:$camera_name}' >"${map_file}" 2>/dev/null || true
 }
 
-lookup_camera_id() {
+load_camera_metadata() {
   local safe_id="$1"
-  local map_file="/data/camera_map_${safe_id}"
-  if [ -f "${map_file}" ]; then
-    cut -d'|' -f1 "${map_file}"
+  local id_var="$2"
+  local name_var="$3"
+  local map_file="${CAMERA_MAP_DIR}/${safe_id}.json"
+
+  if [ ! -f "${map_file}" ]; then
+    return 1
+  fi
+
+  local camera_id
+  camera_id=$(jq -r '.camera_id // empty' "${map_file}" 2>/dev/null)
+  if [ -z "${camera_id}" ] || [ "${camera_id}" = "null" ]; then
+    return 1
+  fi
+
+  local camera_name
+  camera_name=$(jq -r '.camera_name // empty' "${map_file}" 2>/dev/null)
+  if [ -z "${camera_name}" ] || [ "${camera_name}" = "null" ]; then
+    camera_name="Camera ${camera_id}"
+  fi
+
+  printf -v "${id_var}" '%s' "${camera_id}"
+  printf -v "${name_var}" '%s' "${camera_name}"
+  return 0
+}
+
+publish_webrtc_status() {
+  local safe_id="$1"
+  local status="$2"
+  local message="$3"
+
+  if [ -z "${safe_id}" ]; then
+    return
+  fi
+
+  local ts
+  ts=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+  local status_topic="${BASE_TOPIC}/${safe_id}/webrtc_status"
+  local payload
+  payload=$(jq -n \
+    --arg status "${status}" \
+    --arg message "${message}" \
+    --arg ts "${ts}" \
+    '{status:$status,message:$message,ts:$ts}')
+
+  mosquitto_pub ${MQTT_ARGS} -t "${status_topic}" -m "${payload}" -q 0 >/dev/null 2>&1 || true
+}
+
+fetch_webrtc_ticket_for_camera() {
+  local camera_id="$1"
+  local safe_id="$2"
+  local camera_name="$3"
+  local source="$4"
+
+  if [ -z "${camera_id}" ] || [ -z "${safe_id}" ]; then
+    return 1
+  fi
+
+  local command_output
+  command_output=$(/usr/local/bin/vico-cli webrtc ticket --serial "${camera_id}" --format json 2>/tmp/vico_webrtc_error.log)
+  local exit_code=$?
+
+  if [ ${exit_code} -ne 0 ] || [ -z "${command_output}" ] || [ "${command_output}" = "null" ]; then
+    local err_preview
+    err_preview=$(head -c 200 /tmp/vico_webrtc_error.log 2>/dev/null)
+    bashio::log.warning "WEBRTC: Failed to fetch ticket for ${safe_id} (${camera_id}) via ${source}. exit=${exit_code} stderr=${err_preview}"
+    publish_webrtc_status "${safe_id}" "error" "ticket fetch failed (exit ${exit_code})"
+    return 1
+  fi
+
+  local ts
+  ts=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+  local payload
+  if echo "${command_output}" | jq empty >/dev/null 2>&1; then
+    payload=$(echo "${command_output}" | jq -c \
+      --arg safe_id "${safe_id}" \
+      --arg camera_id "${camera_id}" \
+      --arg camera_name "${camera_name}" \
+      --arg ts "${ts}" \
+      '. + {safe_id:$safe_id,camera_id:$camera_id,deviceName:$camera_name,ts:$ts}')
+  else
+    payload=$(jq -n \
+      --arg safe_id "${safe_id}" \
+      --arg camera_id "${camera_id}" \
+      --arg camera_name "${camera_name}" \
+      --arg ts "${ts}" \
+      --arg raw "${command_output}" \
+      '{safe_id:$safe_id,camera_id:$camera_id,deviceName:$camera_name,ts:$ts,raw:$raw}')
+  fi
+
+  local ticket_topic="${BASE_TOPIC}/${safe_id}/webrtc_ticket"
+  if mosquitto_pub ${MQTT_ARGS} -t "${ticket_topic}" -m "${payload}" -q 0; then
+    bashio::log.info "WEBRTC: Published ticket for ${safe_id} (${camera_name}) via ${source}."
+    publish_webrtc_status "${safe_id}" "ok" "ticket published ${ts}"
+    return 0
+  fi
+
+  bashio::log.warning "WEBRTC: Failed to publish ticket payload for ${safe_id} (${ticket_topic})."
+  publish_webrtc_status "${safe_id}" "error" "mqtt publish failed"
+  return 1
+}
+
+maybe_poll_webrtc_tickets() {
+  if [ "${WEBRTC_ACTIVE}" != "true" ] || [ "${WEBRTC_MODE}" != "poll" ]; then
+    return
+  fi
+
+  local now
+  now=$(date +%s)
+  if [ "${WEBRTC_LAST_POLL}" -ne 0 ] && [ $((now - WEBRTC_LAST_POLL)) -lt "${WEBRTC_POLL_INTERVAL}" ]; then
+    return
+  fi
+  WEBRTC_LAST_POLL=${now}
+
+  local any_camera="false"
+  for map_file in "${CAMERA_MAP_DIR}"/*.json; do
+    if [ ! -e "${map_file}" ]; then
+      continue
+    fi
+    any_camera="true"
+    local safe_id
+    safe_id=$(basename "${map_file}" .json)
+    local poll_camera_id=""
+    local poll_camera_name=""
+    if load_camera_metadata "${safe_id}" poll_camera_id poll_camera_name; then
+      fetch_webrtc_ticket_for_camera "${poll_camera_id}" "${safe_id}" "${poll_camera_name}" "poll"
+    else
+      bashio::log.debug "WEBRTC: Missing camera metadata for ${safe_id} during poll cycle."
+    fi
+  done
+
+  if [ "${any_camera}" != "true" ]; then
+    bashio::log.debug "WEBRTC: Poll mode enabled but no camera mappings discovered yet."
   fi
 }
 
-lookup_camera_name() {
-  local safe_id="$1"
-  local map_file="/data/camera_map_${safe_id}"
-  if [ -f "${map_file}" ]; then
-    cut -d'|' -f2- "${map_file}"
+start_webrtc_request_listener() {
+  if [ "${WEBRTC_ACTIVE}" != "true" ] || [ "${WEBRTC_MODE}" != "on_demand" ]; then
+    return
   fi
-}
 
-remember_p2p_session() {
-  local safe_id="$1"
-  local camera_id="$2"
-  local session_id="$3"
-  local file="/data/p2p_session_${safe_id}"
-  printf '%s|%s' "${camera_id}" "${session_id}" >"${file}" 2>/dev/null || true
-}
+  local topic="${BASE_TOPIC}/+/webrtc_request"
+  (
+    while true; do
+      bashio::log.info "WEBRTC: Listening for ticket requests on ${topic}"
+      mosquitto_sub ${MQTT_ARGS} -v -t "${topic}" | while IFS= read -r line; do
+        [ -z "${line}" ] && continue
+        local request_topic
+        request_topic=${line%% *}
+        local payload
+        payload=${line#${request_topic} }
 
-read_p2p_session() {
-  local safe_id="$1"
-  local file="/data/p2p_session_${safe_id}"
-  if [ -f "${file}" ]; then
-    cat "${file}"
-  fi
-}
+        local suffix
+        suffix=${request_topic#${BASE_TOPIC}/}
+        local safe_id
+        safe_id=${suffix%%/webrtc_request*}
+        if [ -z "${safe_id}" ] || [ "${safe_id}" = "${request_topic}" ]; then
+          bashio::log.warning "WEBRTC: Unable to parse safe_id from topic '${request_topic}'"
+          continue
+        fi
 
-clear_p2p_session() {
-  local safe_id="$1"
-  rm -f "/data/p2p_session_${safe_id}" 2>/dev/null || true
+        local req_camera_id=""
+        local req_camera_name=""
+        if ! load_camera_metadata "${safe_id}" req_camera_id req_camera_name; then
+          bashio::log.warning "WEBRTC: Ticket requested for unknown safe_id '${safe_id}'."
+          publish_webrtc_status "${safe_id}" "error" "unknown camera"
+          continue
+        fi
+
+        bashio::log.info "WEBRTC: Ticket request received for ${safe_id} (${req_camera_name})."
+        remember_camera_metadata "${req_camera_id}" "${req_camera_name}"
+        fetch_webrtc_ticket_for_camera "${req_camera_id}" "${safe_id}" "${req_camera_name}" "on_demand"
+      done
+
+      local sub_exit=${PIPESTATUS[0]}
+      local handler_exit=${PIPESTATUS[1]}
+      bashio::log.warning "WEBRTC: MQTT request listener exited (sub=${sub_exit}, handler=${handler_exit}), restarting in 5s."
+      sleep 5
+    done
+  ) &
+  WEBRTC_SUB_PID=$!
 }
 
 # v3 marker so HA treats these as a new generation of devices/entities
@@ -226,6 +418,8 @@ ensure_discovery_published() {
   if [ -z "${camera_name}" ] || [ "${camera_name}" = "null" ]; then
     camera_name="Camera ${camera_id}"
   fi
+
+  remember_camera_metadata "${camera_id}" "${camera_name}"
 
   # Last Event sensor (state = event type, attributes = full JSON)
   local sensor_payload
@@ -746,7 +940,7 @@ fi
 bashio::log.info "Starting Vicohome Bridge main loop: polling every ${POLL_INTERVAL}s"
 bashio::log.info "NOTE: Entities are created lazily when events are received."
 
-start_command_listener
+start_webrtc_request_listener
 
 # ==========================
 #  Main loop
@@ -849,6 +1043,8 @@ while true; do
       publish_motion_pulse "${SAFE_ID}"
     fi
   fi
+
+  maybe_poll_webrtc_tickets
 
   sleep "${POLL_INTERVAL}"
 done
