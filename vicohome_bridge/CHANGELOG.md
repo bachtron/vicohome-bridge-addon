@@ -1,5 +1,10 @@
 # Vicohome Bridge Add-on Changelog
 
+## 1.5.0
+- Added an optional go2rtc bridge: every WebRTC ticket can now be mirrored to `http://go2rtc:1984/api/stream` using the `vicohome_<safe_id>` naming convention, making it easier for the go2rtc add-on to ingest Vicohome tickets without its own MQTT subscriber.
+- Introduced the `go2rtc_enabled`, `go2rtc_url`, and `go2rtc_stream_prefix` configuration options (disabled by default) so users can turn on the HTTP bridge only when a go2rtc instance is available.
+- Documented the HTTP payload structure and workflow in the README alongside the existing MQTT-based instructions.
+
 ## 1.4.0
 - Added experimental WebRTC / P2P ticket export so power users can request Vicohome tickets over MQTT and hand them to go2rtc (or other tooling) without modifying the add-on image.
 - Introduced `webrtc_enabled`, `webrtc_mode`, and `webrtc_poll_interval` configuration options plus matching MQTT request/ticket/status topics while keeping the feature opt-in by default.

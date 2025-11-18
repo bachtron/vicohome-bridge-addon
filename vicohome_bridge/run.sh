@@ -18,6 +18,9 @@ BOOTSTRAP_HISTORY=$(bashio::config 'bootstrap_history')
 WEBRTC_ENABLED=$(bashio::config 'webrtc_enabled')
 WEBRTC_MODE=$(bashio::config 'webrtc_mode')
 WEBRTC_POLL_INTERVAL=$(bashio::config 'webrtc_poll_interval')
+GO2RTC_ENABLED=$(bashio::config 'go2rtc_enabled')
+GO2RTC_URL=$(bashio::config 'go2rtc_url')
+GO2RTC_STREAM_PREFIX=$(bashio::config 'go2rtc_stream_prefix')
 
 [ -z "${BOOTSTRAP_HISTORY}" ] && BOOTSTRAP_HISTORY="true"
 HAS_BOOTSTRAPPED="false"
@@ -61,6 +64,19 @@ WEBRTC_ACTIVE="false"
 if [ "${WEBRTC_ENABLED}" = "true" ] && [ "${WEBRTC_MODE}" != "off" ]; then
   WEBRTC_ACTIVE="true"
 fi
+if [ -z "${GO2RTC_ENABLED}" ] || [ "${GO2RTC_ENABLED}" = "null" ]; then
+  GO2RTC_ENABLED="false"
+fi
+if [ -z "${GO2RTC_URL}" ] || [ "${GO2RTC_URL}" = "null" ]; then
+  GO2RTC_URL="http://go2rtc:1984/api/stream"
+fi
+if [ -z "${GO2RTC_STREAM_PREFIX}" ] || [ "${GO2RTC_STREAM_PREFIX}" = "null" ]; then
+  GO2RTC_STREAM_PREFIX="vicohome_"
+fi
+GO2RTC_ACTIVE="false"
+if [ "${GO2RTC_ENABLED}" = "true" ]; then
+  GO2RTC_ACTIVE="true"
+fi
 WEBRTC_LAST_POLL=0
 WEBRTC_SUB_PID=""
 AVAILABILITY_TOPIC="${BASE_TOPIC}/bridge/status"
@@ -80,6 +96,9 @@ fi
 bashio::log.info "  webrtc_enabled = ${WEBRTC_ENABLED}"
 bashio::log.info "  webrtc_mode    = ${WEBRTC_MODE}"
 bashio::log.info "  webrtc_poll_interval = ${WEBRTC_POLL_INTERVAL}s"
+bashio::log.info "  go2rtc_enabled = ${GO2RTC_ENABLED}"
+bashio::log.info "  go2rtc_url     = ${GO2RTC_URL}"
+bashio::log.info "  go2rtc_stream_prefix = ${GO2RTC_STREAM_PREFIX}"
 
 API_BASE_LOG="${API_BASE}"
 if [ -z "${API_BASE_LOG}" ]; then
@@ -91,6 +110,12 @@ if [ "${WEBRTC_ACTIVE}" = "true" ]; then
   bashio::log.info "WEBRTC: Enabled (mode=${WEBRTC_MODE}, poll_interval=${WEBRTC_POLL_INTERVAL}s)"
 else
   bashio::log.info "WEBRTC: Disabled (set webrtc_enabled=true to opt in)."
+fi
+
+if [ "${GO2RTC_ACTIVE}" = "true" ]; then
+  bashio::log.info "go2rtc HTTP bridge: Enabled (POST ${GO2RTC_URL}, stream prefix '${GO2RTC_STREAM_PREFIX}')"
+else
+  bashio::log.info "go2rtc HTTP bridge: Disabled (set go2rtc_enabled=true to mirror tickets via HTTP)."
 fi
 
 bashio::log.level "${LOG_LEVEL}"
@@ -242,6 +267,55 @@ publish_webrtc_status() {
   mosquitto_pub ${MQTT_ARGS} -t "${status_topic}" -m "${payload}" -q 0 >/dev/null 2>&1 || true
 }
 
+send_ticket_to_go2rtc() {
+  local safe_id="$1"
+  local camera_id="$2"
+  local camera_name="$3"
+  local ts="$4"
+  local ticket_payload="$5"
+
+  if [ "${GO2RTC_ACTIVE}" != "true" ]; then
+    return 0
+  fi
+
+  if [ -z "${GO2RTC_URL}" ]; then
+    return 0
+  fi
+
+  if [ -z "${safe_id}" ] || [ -z "${camera_id}" ]; then
+    return 1
+  fi
+
+  if ! echo "${ticket_payload}" | jq empty >/dev/null 2>&1; then
+    bashio::log.warning "WEBRTC: Cannot send ticket for ${safe_id} to go2rtc because payload is not valid JSON."
+    return 1
+  fi
+
+  local stream_name="${GO2RTC_STREAM_PREFIX}${safe_id}"
+  local request_body
+  request_body=$(jq -n \
+    --arg name "${stream_name}" \
+    --arg safe_id "${safe_id}" \
+    --arg camera_id "${camera_id}" \
+    --arg camera_name "${camera_name}" \
+    --arg ts "${ts}" \
+    --argjson ticket "${ticket_payload}" \
+    '{name:$name,safe_id:$safe_id,camera_id:$camera_id,camera_name:$camera_name,ts:$ts,ticket:$ticket}')
+
+  local http_code
+  http_code=$(curl -s -o /tmp/go2rtc_post.log -w "%{http_code}" -X POST -H "Content-Type: application/json" -d "${request_body}" "${GO2RTC_URL}" || echo "000")
+
+  if echo "${http_code}" | grep -Eq '^2'; then
+    bashio::log.info "WEBRTC: Sent ticket for ${safe_id} to go2rtc stream ${stream_name} (HTTP ${http_code})."
+    return 0
+  fi
+
+  local resp
+  resp=$(head -c 300 /tmp/go2rtc_post.log 2>/dev/null)
+  bashio::log.warning "WEBRTC: go2rtc POST failed for stream ${stream_name} (HTTP ${http_code}). Response: ${resp}"
+  return 1
+}
+
 fetch_webrtc_ticket_for_camera() {
   local camera_id="$1"
   local safe_id="$2"
@@ -288,6 +362,7 @@ fetch_webrtc_ticket_for_camera() {
   if mosquitto_pub ${MQTT_ARGS} -t "${ticket_topic}" -m "${payload}" -q 0; then
     bashio::log.info "WEBRTC: Published ticket for ${safe_id} (${camera_name}) via ${source}."
     publish_webrtc_status "${safe_id}" "ok" "ticket published ${ts}"
+    send_ticket_to_go2rtc "${safe_id}" "${camera_id}" "${camera_name}" "${ts}" "${payload}"
     return 0
   fi
 
