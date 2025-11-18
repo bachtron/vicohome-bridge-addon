@@ -38,6 +38,30 @@ func logDebug(format string, args ...interface{}) {
 	}
 }
 
+// GetAPIBaseURL resolves the Vicohome API base URL based on environment variables.
+// Precedence:
+// 1. VICOHOME_API_BASE: explicit full URL (highest priority)
+// 2. VICOHOME_REGION: shorthand region selector (e.g. "us", "eu")
+// 3. Default fallback to the US API endpoint
+func GetAPIBaseURL() string {
+	if rawBase := strings.TrimSpace(os.Getenv("VICOHOME_API_BASE")); rawBase != "" {
+		return strings.TrimRight(rawBase, "/")
+	}
+
+	region := strings.ToLower(strings.TrimSpace(os.Getenv("VICOHOME_REGION")))
+	switch region {
+	case "eu", "europe":
+		return "https://api-eu.vicoo.tech"
+	case "us", "", "default", "na", "na1":
+		return "https://api-us.vicohome.io"
+	default:
+		if strings.HasPrefix(region, "http://") || strings.HasPrefix(region, "https://") {
+			return strings.TrimRight(region, "/")
+		}
+		return "https://api-us.vicohome.io"
+	}
+}
+
 // LoginRequest represents the JSON request body sent to the Vicohome API
 // during authentication.
 type LoginRequest struct {
@@ -128,7 +152,8 @@ func authenticateDirectly() (string, error) {
 		return "", fmt.Errorf("error marshaling login request: %w", err)
 	}
 
-	req, err := http.NewRequest("POST", "https://api-us.vicohome.io/account/login", bytes.NewBuffer(reqBody))
+	baseURL := GetAPIBaseURL()
+	req, err := http.NewRequest("POST", baseURL+"/account/login", bytes.NewBuffer(reqBody))
 	if err != nil {
 		return "", fmt.Errorf("error creating request: %w", err)
 	}

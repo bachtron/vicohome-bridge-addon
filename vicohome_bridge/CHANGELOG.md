@@ -1,5 +1,22 @@
 # Vicohome Bridge Add-on Changelog
 
+## 1.5.0
+- Added an optional go2rtc bridge: every WebRTC ticket can now be mirrored to `http://go2rtc:1984/api/stream` using the `vicohome_<safe_id>` naming convention, making it easier for the go2rtc add-on to ingest Vicohome tickets without its own MQTT subscriber.
+- Introduced the `go2rtc_enabled`, `go2rtc_url`, and `go2rtc_stream_prefix` configuration options (disabled by default) so users can turn on the HTTP bridge only when a go2rtc instance is available.
+- Documented the HTTP payload structure and workflow in the README alongside the existing MQTT-based instructions.
+
+## 1.4.0
+- Added experimental WebRTC / P2P ticket export so power users can request Vicohome tickets over MQTT and hand them to go2rtc (or other tooling) without modifying the add-on image.
+- Introduced `webrtc_enabled`, `webrtc_mode`, and `webrtc_poll_interval` configuration options plus matching MQTT request/ticket/status topics while keeping the feature opt-in by default.
+- Documented the go2rtc tie-in pattern and WebRTC topic schema in the README so integrators have a consistent naming convention (`vicohome_<safe_id>` streams).
+
+## 1.3.0
+- Added regional awareness to `vico-cli` so the bridge can authenticate and poll either the US or EU Vicohome shards (or any
+  fully-qualified custom API host) based on the new configuration options.
+- Introduced `region` / `api_base` add-on options and exported them as `VICOHOME_REGION` / `VICOHOME_API_BASE` environment
+  variables so the integration defaults to the US cloud but can be pointed at EU or white-label deployments without custom
+  images.
+
 ## 1.2.2
 - Extended the bootstrap history pull to cover the last 5 days of Vicohome activity so Last Event sensors populate even when your account has been idle for more than a day.
 
