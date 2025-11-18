@@ -1,5 +1,12 @@
 # Vicohome Bridge Add-on Changelog
 
+## 1.3.0
+- Added regional awareness to `vico-cli` so the bridge can authenticate and poll either the US or EU Vicohome shards (or any
+  fully-qualified custom API host) based on the new configuration options.
+- Introduced `region` / `api_base` add-on options and exported them as `VICOHOME_REGION` / `VICOHOME_API_BASE` environment
+  variables so the integration defaults to the US cloud but can be pointed at EU or white-label deployments without custom
+  images.
+
 ## 1.2.2
 - Extended the bootstrap history pull to cover the last 5 days of Vicohome activity so Last Event sensors populate even when your account has been idle for more than a day.
 
