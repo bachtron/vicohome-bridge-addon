@@ -1,5 +1,14 @@
 # Vicohome Bridge Add-on Changelog
 
+## 1.5.2
+- Hardened multi-region support by defaulting the add-on's `region` option to `auto`, validating it against `auto/us/eu`, and logging the resolved Vicohome API host on startup.
+- Forwarded the configured region to every `vico-cli` command (`devices`, `events`, WebRTC tickets, bootstrap) and surfaced a clear warning when the API returns `ACCOUNT_NOT_REGISTERED (-1001)` so EU deployments can fix mismatched shards.
+- Added CLI unit tests and a `--region` flag to lock requests to the correct Vicohome host, ensuring EU accounts keep their device metadata and telemetry.
+
+## 1.5.1
+- Fixed the `vico-cli devices` and event helpers to send a region-aware `countryNo`, so EU deployments now receive the same
+  camera metadata/telemetry as US users instead of "unknown" devices.
+
 ## 1.5.0
 - Added an optional go2rtc bridge: every WebRTC ticket can now be mirrored to `http://go2rtc:1984/api/stream` using the `vicohome_<safe_id>` naming convention, making it easier for the go2rtc add-on to ingest Vicohome tickets without its own MQTT subscriber.
 - Introduced the `go2rtc_enabled`, `go2rtc_url`, and `go2rtc_stream_prefix` configuration options (disabled by default) so users can turn on the HTTP bridge only when a go2rtc instance is available.

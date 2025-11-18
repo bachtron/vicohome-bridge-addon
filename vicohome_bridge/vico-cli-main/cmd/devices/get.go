@@ -79,10 +79,11 @@ func init() {
 // This function handles the API request, response parsing, and error handling including
 // authentication refreshes when needed.
 func getDevice(token string, serialNumber string) (Device, error) {
+	countryCode := auth.GetCountryCode()
 	req := DeviceRequest{
 		SerialNumber: serialNumber,
 		Language:     "en",
-		CountryNo:    "US",
+		CountryNo:    countryCode,
 	}
 
 	reqBody, err := json.Marshal(req)

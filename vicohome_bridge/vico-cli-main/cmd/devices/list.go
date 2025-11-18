@@ -97,9 +97,10 @@ func init() {
 // This function handles the API request, response parsing, and error handling including
 // authentication refreshes when needed.
 func listDevices(token string) ([]Device, error) {
+	countryCode := auth.GetCountryCode()
 	req := DeviceListRequest{
 		Language:  "en",
-		CountryNo: "US",
+		CountryNo: countryCode,
 	}
 
 	reqBody, err := json.Marshal(req)

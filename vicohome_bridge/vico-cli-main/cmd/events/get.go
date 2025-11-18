@@ -80,10 +80,11 @@ func init() {
 // an Event object and any error encountered.
 // This function handles the API request, response parsing, and error handling.
 func getEvent(token string, traceID string) (Event, error) {
+	countryCode := auth.GetCountryCode()
 	req := EventRequest{
 		TraceID:   traceID,
 		Language:  "en",
-		CountryNo: "US",
+		CountryNo: countryCode,
 	}
 
 	reqBody, err := json.Marshal(req)

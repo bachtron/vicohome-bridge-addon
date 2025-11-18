@@ -52,13 +52,45 @@ func GetAPIBaseURL() string {
 	switch region {
 	case "eu", "europe":
 		return "https://api-eu.vicoo.tech"
-	case "us", "", "default", "na", "na1":
+	case "us", "", "default", "na", "na1", "auto":
 		return "https://api-us.vicohome.io"
 	default:
 		if strings.HasPrefix(region, "http://") || strings.HasPrefix(region, "https://") {
 			return strings.TrimRight(region, "/")
 		}
 		return "https://api-us.vicohome.io"
+	}
+}
+
+// GetCountryCode derives the best-fit country hint for API requests based on the
+// configured region or API base. Some Vicohome endpoints (notably the device
+// list calls used for telemetry) appear to scope their responses to the
+// provided country code, so EU deployments need something other than the
+// previously hard-coded "US".
+func GetCountryCode() string {
+	region := strings.ToLower(strings.TrimSpace(os.Getenv("VICOHOME_REGION")))
+	base := strings.ToLower(strings.TrimSpace(os.Getenv("VICOHOME_API_BASE")))
+
+	// If no explicit region was provided but the API base URL points at an EU
+	// cluster, treat the account as EU. (Custom hosts can still override via the
+	// region env var.)
+	if region == "" && strings.Contains(base, "api-eu") {
+		region = "eu"
+	}
+
+	switch region {
+	case "eu", "europe":
+		return "EU"
+	case "us", "", "default", "na", "na1", "auto":
+		return "US"
+	default:
+		if strings.HasPrefix(region, "http://") || strings.HasPrefix(region, "https://") {
+			return "US"
+		}
+		if len(region) == 2 {
+			return strings.ToUpper(region)
+		}
+		return "US"
 	}
 }
 

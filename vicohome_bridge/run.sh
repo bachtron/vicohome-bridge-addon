@@ -22,7 +22,7 @@ GO2RTC_ENABLED=$(bashio::config 'go2rtc_enabled')
 GO2RTC_URL=$(bashio::config 'go2rtc_url')
 GO2RTC_STREAM_PREFIX=$(bashio::config 'go2rtc_stream_prefix')
 
-[ -z "${BOOTSTRAP_HISTORY}" ] && BOOTSTRAP_HISTORY="true"
+[ -z "${BOOTSTRAP_HISTORY}" ] && BOOTSTRAP_HISTORY="false"
 HAS_BOOTSTRAPPED="false"
 COMMAND_LISTENER_PID=""
 
@@ -31,8 +31,9 @@ COMMAND_LISTENER_PID=""
 [ -z "${LOG_LEVEL}" ] && LOG_LEVEL="info"
 [ -z "${BASE_TOPIC}" ] && BASE_TOPIC="vicohome"
 if [ -z "${REGION}" ] || [ "${REGION}" = "null" ]; then
-  REGION="us"
+  REGION="auto"
 fi
+REGION=$(echo "${REGION}" | tr '[:upper:]' '[:lower:]')
 if [ -z "${API_BASE}" ] || [ "${API_BASE}" = "null" ]; then
   API_BASE=""
 fi
@@ -104,7 +105,42 @@ API_BASE_LOG="${API_BASE}"
 if [ -z "${API_BASE_LOG}" ]; then
   API_BASE_LOG="<none>"
 fi
+resolve_api_base() {
+  local override="$1"
+  local region_value="$2"
+
+  if [ -n "${override}" ]; then
+    echo "${override%/}"
+    return
+  fi
+
+  local region_lower
+  region_lower=$(echo "${region_value}" | tr '[:upper:]' '[:lower:]')
+
+  case "${region_lower}" in
+    eu|europe)
+      echo "https://api-eu.vicoo.tech"
+      return
+      ;;
+    us|default|na|na1|""|auto)
+      echo "https://api-us.vicohome.io"
+      return
+      ;;
+    http://*|https://*)
+      echo "${region_value%/}"
+      return
+      ;;
+    *)
+      echo "https://api-us.vicohome.io"
+      return
+      ;;
+  esac
+}
+
+RESOLVED_API_BASE=$(resolve_api_base "${API_BASE}" "${REGION}")
+
 bashio::log.info "Vicohome region = ${REGION}, api_base override = ${API_BASE_LOG}"
+bashio::log.info "Resolved Vicohome API host = ${RESOLVED_API_BASE}"
 
 if [ "${WEBRTC_ACTIVE}" = "true" ]; then
   bashio::log.info "WEBRTC: Enabled (mode=${WEBRTC_MODE}, poll_interval=${WEBRTC_POLL_INTERVAL}s)"
@@ -327,8 +363,10 @@ fetch_webrtc_ticket_for_camera() {
   fi
 
   local command_output
-  command_output=$(/usr/local/bin/vico-cli webrtc ticket --serial "${camera_id}" --format json 2>/tmp/vico_webrtc_error.log)
+  command_output=$(/usr/local/bin/vico-cli --region "${REGION}" webrtc ticket --serial "${camera_id}" --format json 2>/tmp/vico_webrtc_error.log)
   local exit_code=$?
+
+  maybe_warn_region_mismatch "vico-cli webrtc ticket" "${command_output}" /tmp/vico_webrtc_error.log
 
   if [ ${exit_code} -ne 0 ] || [ -z "${command_output}" ] || [ "${command_output}" = "null" ]; then
     local err_preview
@@ -594,10 +632,12 @@ run_bootstrap_history() {
 
   bashio::log.info "Running one-time bootstrap history pull from vico-cli..."
 
-  BOOTSTRAP_JSON=$(/usr/local/bin/vico-cli events list \
+  BOOTSTRAP_JSON=$(/usr/local/bin/vico-cli --region "${REGION}" events list \
     --format json \
     --since 120h 2>/tmp/vico_bootstrap_error.log)
   EXIT_CODE=$?
+
+  maybe_warn_region_mismatch "bootstrap events list" "${BOOTSTRAP_JSON}" /tmp/vico_bootstrap_error.log
 
   if [ ${EXIT_CODE} -ne 0 ] || [ -z "${BOOTSTRAP_JSON}" ] || [ "${BOOTSTRAP_JSON}" = "null" ]; then
     bashio::log.warning "Bootstrap history pull failed (exit ${EXIT_CODE}). stderr: $(head -c 200 /tmp/vico_bootstrap_error.log 2>/dev/null)"
@@ -719,12 +759,35 @@ publish_device_health() {
     -q 0 || bashio::log.warning "Failed to publish telemetry for ${telemetry_topic}"
 }
 
+maybe_warn_region_mismatch() {
+  local context="$1"
+  local payload="$2"
+  local err_file="$3"
+
+  local match=""
+  if printf '%s' "${payload}" | grep -qi 'ACCOUNT_NOT_REGISTERED'; then
+    match="payload"
+  elif printf '%s' "${payload}" | grep -Eq '"(code|result)"\s*:\s*-?1001'; then
+    match="payload"
+  elif [ -n "${err_file}" ] && [ -f "${err_file}" ] && grep -qi 'ACCOUNT_NOT_REGISTERED' "${err_file}"; then
+    match="stderr"
+  elif [ -n "${err_file}" ] && [ -f "${err_file}" ] && grep -Eq '-1001' "${err_file}"; then
+    match="stderr"
+  fi
+
+  if [ -n "${match}" ]; then
+    bashio::log.warning "Vicohome API returned ACCOUNT_NOT_REGISTERED (-1001) while running ${context}. Verify your bridge account credentials and ensure the add-on's region option matches your Vicohome shard (e.g. set region=eu for EU accounts). Current region=${REGION}, API host=${RESOLVED_API_BASE}."
+  fi
+}
+
 poll_device_health() {
   bashio::log.info "Polling vico-cli for device info..."
 
   local devices_output
-  devices_output=$(/usr/local/bin/vico-cli devices list --format json 2>/tmp/vico_devices_error.log)
+  devices_output=$(/usr/local/bin/vico-cli --region "${REGION}" devices list --format json 2>/tmp/vico_devices_error.log)
   local exit_code=$?
+
+  maybe_warn_region_mismatch "vico-cli devices list" "${devices_output}" /tmp/vico_devices_error.log
 
   if [ ${exit_code} -ne 0 ]; then
     bashio::log.warning "vico-cli devices list exited with code ${exit_code}."
@@ -1030,8 +1093,10 @@ while true; do
   poll_device_health
   bashio::log.info "Polling vico-cli for events..."
 
-  JSON_OUTPUT=$(/usr/local/bin/vico-cli events list --format json 2>/tmp/vico_error.log)
+  JSON_OUTPUT=$(/usr/local/bin/vico-cli --region "${REGION}" events list --format json 2>/tmp/vico_error.log)
   EXIT_CODE=$?
+
+  maybe_warn_region_mismatch "vico-cli events list" "${JSON_OUTPUT}" /tmp/vico_error.log
 
   if [ ${EXIT_CODE} -ne 0 ]; then
     bashio::log.error "vico-cli exited with code ${EXIT_CODE}."
