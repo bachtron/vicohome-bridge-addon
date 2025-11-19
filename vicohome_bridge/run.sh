@@ -104,8 +104,6 @@ if [ -n "${API_BASE}" ]; then
 fi
 
 mkdir -p /data
-CAMERA_MAP_DIR="/data/camera_map"
-mkdir -p "${CAMERA_MAP_DIR}"
 
 # ==========================
 #  Helper functions
@@ -197,8 +195,6 @@ ensure_discovery_published() {
   if [ -z "${camera_name}" ] || [ "${camera_name}" = "null" ]; then
     camera_name="Camera ${camera_id}"
   fi
-
-  remember_camera_metadata "${camera_id}" "${camera_name}"
 
   # Last Event sensor (state = event type, attributes = full JSON)
   local sensor_payload
@@ -315,7 +311,6 @@ run_bootstrap_history() {
       EVENT_TYPE=$(echo "${event}" | jq -r '.eventType // .type // .event_type // empty')
 
       ensure_discovery_published "${CAMERA_ID}" "${CAMERA_NAME}"
-      cache_camera_metadata "${CAMERA_ID}" "${SAFE_ID}" "${CAMERA_NAME}"
       publish_event_for_camera "${SAFE_ID}" "${event}"
 
       if [ "${EVENT_TYPE}" = "motion" ] || [ "${EVENT_TYPE}" = "person" ] || [ "${EVENT_TYPE}" = "human" ] || [ "${EVENT_TYPE}" = "bird" ]; then
@@ -391,16 +386,19 @@ publish_device_health() {
   safe_id=$(sanitize_id "${camera_id}")
 
   ensure_discovery_published "${camera_id}" "${camera_name}"
-  cache_camera_metadata "${camera_id}" "${safe_id}" "${display_name}"
 
   local timestamp
   timestamp=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 
   local telemetry_payload
-  telemetry_payload=$(echo "${device_json}" | jq -c \
+  if ! telemetry_payload=$(echo "${device_json}" | jq -c \
     --arg timestamp "${timestamp}" \
     --argjson online "${online_json}" \
     '{batteryLevel:(.batteryLevel // .battery_percent // .batteryPercent // .battery // null), signalStrength:(.signalStrength // .signal_strength // .signalDbm // .signal_dbm // .wifiStrength // .rssi // null), online:$online, ip:(.ip // ""), timestamp:$timestamp}')
+  then
+    bashio::log.warning "Failed to parse telemetry payload for ${safe_id}; skipping publish this cycle."
+    return 0
+  fi
 
   local battery_summary
   battery_summary=$(echo "${telemetry_payload}" | jq -r 'if .batteryLevel == null then "null" else (.batteryLevel|tostring) end')
@@ -419,27 +417,6 @@ publish_device_health() {
     -q 0 || bashio::log.warning "Failed to publish telemetry for ${telemetry_topic}"
 }
 
-maybe_warn_region_mismatch() {
-  local context="$1"
-  local payload="$2"
-  local err_file="$3"
-
-  local match=""
-  if printf '%s' "${payload}" | grep -qi 'ACCOUNT_NOT_REGISTERED'; then
-    match="payload"
-  elif printf '%s' "${payload}" | grep -Eq '"(code|result)"\s*:\s*-?1001'; then
-    match="payload"
-  elif [ -n "${err_file}" ] && [ -f "${err_file}" ] && grep -qi 'ACCOUNT_NOT_REGISTERED' "${err_file}"; then
-    match="stderr"
-  elif [ -n "${err_file}" ] && [ -f "${err_file}" ] && grep -Eq '-1001' "${err_file}"; then
-    match="stderr"
-  fi
-
-  if [ -n "${match}" ]; then
-    bashio::log.warning "Vicohome API returned ACCOUNT_NOT_REGISTERED (-1001) while running ${context}. Verify your bridge account credentials and ensure the add-on's region option matches your Vicohome shard (e.g. set region=eu for EU accounts). Current region=${REGION}, API host=${RESOLVED_API_BASE}."
-  fi
-}
-
 poll_device_health() {
   bashio::log.info "Polling vico-cli for device info..."
 
@@ -452,17 +429,17 @@ poll_device_health() {
   if [ ${exit_code} -ne 0 ]; then
     bashio::log.warning "vico-cli devices list exited with code ${exit_code}."
     bashio::log.warning "stderr (first 200 chars): $(head -c 200 /tmp/vico_devices_error.log 2>/dev/null)"
-    return
+    return 0
   fi
 
   if [ -z "${devices_output}" ] || [ "${devices_output}" = "null" ]; then
     bashio::log.info "vico-cli devices list returned no data."
-    return
+    return 0
   fi
 
   if ! echo "${devices_output}" | jq -e 'type=="array"' >/dev/null 2>&1; then
     bashio::log.warning "Device list output was not JSON array, skipping telemetry publish."
-    return
+    return 0
   fi
 
   local device_count
@@ -470,9 +447,13 @@ poll_device_health() {
   bashio::log.info "vico-cli devices list returned ${device_count} device(s) for telemetry publishing."
   bashio::log.debug "Device list payload preview: $(echo "${devices_output}" | tr -d '\n' | head -c 400)"
 
-  echo "${devices_output}" | jq -c '.[]' | while read -r device; do
+  if ! echo "${devices_output}" | jq -c '.[]' | while read -r device; do
     publish_device_health "${device}"
-  done
+  done; then
+    bashio::log.warning "Failed to iterate device list JSON payload; will retry next cycle."
+  fi
+
+  return 0
 }
 
 # ==========================
@@ -554,7 +535,6 @@ while true; do
       bashio::log.debug "Event for ${SAFE_ID} (${CAMERA_NAME}) type='${EVENT_TYPE}': ${event_preview}"
 
       ensure_discovery_published "${CAMERA_ID}" "${CAMERA_NAME}"
-      cache_camera_metadata "${CAMERA_ID}" "${SAFE_ID}" "${CAMERA_NAME}"
       publish_event_for_camera "${SAFE_ID}" "${event}"
 
       if [ "${EVENT_TYPE}" = "motion" ] || [ "${EVENT_TYPE}" = "person" ] || [ "${EVENT_TYPE}" = "human" ] || [ "${EVENT_TYPE}" = "bird" ]; then
@@ -585,7 +565,6 @@ while true; do
     bashio::log.debug "Event for ${SAFE_ID} (${CAMERA_NAME}) type='${EVENT_TYPE}': ${event_preview}"
 
     ensure_discovery_published "${CAMERA_ID}" "${CAMERA_NAME}"
-    cache_camera_metadata "${CAMERA_ID}" "${SAFE_ID}" "${CAMERA_NAME}"
     publish_event_for_camera "${SAFE_ID}" "${event}"
 
     if [ "${EVENT_TYPE}" = "motion" ] || [ "${EVENT_TYPE}" = "person" ] || [ "${EVENT_TYPE}" = "human" ] || [ "${EVENT_TYPE}" = "bird" ]; then
