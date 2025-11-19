@@ -57,13 +57,12 @@ Times should be in format: 2025-05-18 14:59:25`,
 
 		startTimestamp := fmt.Sprintf("%d", start.Unix())
 		endTimestamp := fmt.Sprintf("%d", end.Unix())
-		countryCode := auth.GetCountryCode()
 
 		eventsReq := Request{
 			StartTimestamp: startTimestamp,
 			EndTimestamp:   endTimestamp,
 			Language:       "en",
-			CountryNo:      countryCode,
+			CountryNo:      auth.GetCountryCode(),
 		}
 
 		allEvents, err := fetchEvents(token, eventsReq)

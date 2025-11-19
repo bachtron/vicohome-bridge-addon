@@ -80,11 +80,10 @@ func init() {
 // an Event object and any error encountered.
 // This function handles the API request, response parsing, and error handling.
 func getEvent(token string, traceID string) (Event, error) {
-	countryCode := auth.GetCountryCode()
 	req := EventRequest{
 		TraceID:   traceID,
 		Language:  "en",
-		CountryNo: countryCode,
+		CountryNo: auth.GetCountryCode(),
 	}
 
 	reqBody, err := json.Marshal(req)
@@ -92,8 +91,8 @@ func getEvent(token string, traceID string) (Event, error) {
 		return Event{}, fmt.Errorf("error marshaling request: %w", err)
 	}
 
-	baseURL := auth.GetAPIBaseURL()
-	httpReq, err := http.NewRequest("POST", baseURL+"/library/newselectsinglelibrary", bytes.NewBuffer(reqBody))
+	apiURL := auth.BuildAPIURL("/library/newselectsinglelibrary")
+	httpReq, err := http.NewRequest("POST", apiURL, bytes.NewBuffer(reqBody))
 	if err != nil {
 		return Event{}, fmt.Errorf("error creating request: %w", err)
 	}

@@ -12,9 +12,9 @@ PASSWORD=$(bashio::config 'password')
 POLL_INTERVAL=$(bashio::config 'poll_interval')
 LOG_LEVEL=$(bashio::config 'log_level')
 BASE_TOPIC=$(bashio::config 'base_topic')
-REGION=$(bashio::config 'region')
-API_BASE=$(bashio::config 'api_base')
 BOOTSTRAP_HISTORY=$(bashio::config 'bootstrap_history')
+REGION=$(bashio::config 'region')
+API_BASE_OVERRIDE=$(bashio::config 'api_base_override')
 
 [ -z "${BOOTSTRAP_HISTORY}" ] && BOOTSTRAP_HISTORY="false"
 HAS_BOOTSTRAPPED="false"
@@ -23,12 +23,10 @@ HAS_BOOTSTRAPPED="false"
 [ -z "${POLL_INTERVAL}" ] && POLL_INTERVAL=60
 [ -z "${LOG_LEVEL}" ] && LOG_LEVEL="info"
 [ -z "${BASE_TOPIC}" ] && BASE_TOPIC="vicohome"
-if [ -z "${REGION}" ] || [ "${REGION}" = "null" ]; then
-  REGION="us"
+if [ "${REGION}" = "null" ]; then
+  REGION=""
 fi
-if [ -z "${API_BASE}" ] || [ "${API_BASE}" = "null" ]; then
-  API_BASE=""
-fi
+[ -z "${REGION}" ] && REGION="auto"
 AVAILABILITY_TOPIC="${BASE_TOPIC}/bridge/status"
 # How often (in seconds) to refresh MQTT discovery payloads so deleted entities get recreated.
 DISCOVERY_REFRESH_SECONDS=300
@@ -38,17 +36,11 @@ bashio::log.info "  poll_interval = ${POLL_INTERVAL}s"
 bashio::log.info "  base_topic    = ${BASE_TOPIC}"
 bashio::log.info "  log_level     = ${LOG_LEVEL}"
 bashio::log.info "  region        = ${REGION}"
-if [ -n "${API_BASE}" ]; then
-  bashio::log.info "  api_base      = ${API_BASE}"
+if [ -n "${API_BASE_OVERRIDE}" ] && [ "${API_BASE_OVERRIDE}" != "null" ]; then
+  bashio::log.info "  api_base_override = ${API_BASE_OVERRIDE}"
 else
-  bashio::log.info "  api_base      = <auto>"
+  API_BASE_OVERRIDE=""
 fi
-
-API_BASE_LOG="${API_BASE}"
-if [ -z "${API_BASE_LOG}" ]; then
-  API_BASE_LOG="<none>"
-fi
-bashio::log.info "Vicohome region = ${REGION}, api_base override = ${API_BASE_LOG}"
 
 bashio::log.level "${LOG_LEVEL}"
 
@@ -83,11 +75,7 @@ publish_availability() {
     || bashio::log.warning "Failed to publish availability state '${state}' to ${AVAILABILITY_TOPIC}"
 }
 
-cleanup() {
-  publish_availability offline
-}
-
-trap cleanup EXIT
+trap 'publish_availability offline' EXIT
 publish_availability online
 
 # ==========================
@@ -96,11 +84,9 @@ publish_availability online
 export VICOHOME_EMAIL="${EMAIL}"
 export VICOHOME_PASSWORD="${PASSWORD}"
 export VICOHOME_DEBUG="1"
-if [ -n "${REGION}" ]; then
-  export VICOHOME_REGION="${REGION}"
-fi
-if [ -n "${API_BASE}" ]; then
-  export VICOHOME_API_BASE="${API_BASE}"
+export VICOHOME_REGION="${REGION}"
+if [ -n "${API_BASE_OVERRIDE}" ]; then
+  export VICOHOME_API_BASE="${API_BASE_OVERRIDE}"
 fi
 
 mkdir -p /data
@@ -111,41 +97,6 @@ mkdir -p /data
 
 sanitize_id() {
   echo "$1" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9]/_/g'
-}
-
-string_contains() {
-  local haystack="$1"
-  local needle="$2"
-
-  if [ -z "${haystack}" ] || [ -z "${needle}" ]; then
-    return 1
-  fi
-
-  # BusyBox grep does not understand numeric flags like -1, so keep the helper
-  # constrained to the portable -F/-q forms and use -- to guard against needles
-  # that start with '-'.
-  printf '%s' "${haystack}" | grep -F -q -- "${needle}"
-}
-
-maybe_warn_region_mismatch() {
-  local context="$1"
-  local payload="$2"
-  local err_file="$3"
-
-  local match=""
-  if printf '%s' "${payload}" | grep -qi -- 'ACCOUNT_NOT_REGISTERED'; then
-    match="payload"
-  elif printf '%s' "${payload}" | grep -Eq -- '"(code|result)"[[:space:]]*:[[:space:]]*-?1001'; then
-    match="payload"
-  elif [ -n "${err_file}" ] && [ -f "${err_file}" ] && grep -qi -- 'ACCOUNT_NOT_REGISTERED' "${err_file}"; then
-    match="stderr"
-  elif [ -n "${err_file}" ] && [ -f "${err_file}" ] && grep -Eq -- '-1001' "${err_file}"; then
-    match="stderr"
-  fi
-
-  if [ -n "${match}" ]; then
-    bashio::log.warning "Vicohome API hinted at a region mismatch (${context}; detected in ${match}). Double-check your region/api_base settings."
-  fi
 }
 
 # v3 marker so HA treats these as a new generation of devices/entities
@@ -199,7 +150,7 @@ ensure_discovery_published() {
   # Last Event sensor (state = event type, attributes = full JSON)
   local sensor_payload
   sensor_payload=$(cat <<EOF
-{"name":"Vicohome ${camera_name} Last Event","unique_id":"${device_ident}_last_event","state_topic":"${state_topic}","availability_topic":"${AVAILABILITY_TOPIC}","payload_available":"online","payload_not_available":"offline","value_template":"{{ value_json.get('eventType') or value_json.get('type') or value_json.get('event_type') or 'unknown' }}","json_attributes_topic":"${state_topic}","device":{"identifiers":["${device_ident}"],"name":"Vicohome ${camera_name}","manufacturer":"Vicohome","model":"Camera"}}
+{"name":"Vicohome ${camera_name} Last Event","unique_id":"${device_ident}_last_event","state_topic":"${state_topic}","availability_topic":"${AVAILABILITY_TOPIC}","payload_available":"online","payload_not_available":"offline","value_template":"{{ value_json.eventType or value_json.type or value_json.event_type }}","json_attributes_topic":"${state_topic}","device":{"identifiers":["${device_ident}"],"name":"Vicohome ${camera_name}","manufacturer":"Vicohome","model":"Camera"}}
 EOF
 )
 
@@ -288,18 +239,10 @@ run_bootstrap_history() {
 
   bashio::log.info "Running one-time bootstrap history pull from vico-cli..."
 
-  local bootstrap_exit=0
-  local bootstrap_output=""
-  if ! bootstrap_output=$(/usr/local/bin/vico-cli --region "${REGION}" events list \
+  BOOTSTRAP_JSON=$(/usr/local/bin/vico-cli events list \
     --format json \
-    --since 120h 2>/tmp/vico_bootstrap_error.log); then
-    bootstrap_exit=$?
-    bootstrap_output=""
-  fi
-  BOOTSTRAP_JSON="${bootstrap_output}"
-  EXIT_CODE=${bootstrap_exit}
-
-  maybe_warn_region_mismatch "bootstrap events list" "${BOOTSTRAP_JSON}" /tmp/vico_bootstrap_error.log
+    --since 120h 2>/tmp/vico_bootstrap_error.log)
+  EXIT_CODE=$?
 
   if [ ${EXIT_CODE} -ne 0 ] || [ -z "${BOOTSTRAP_JSON}" ] || [ "${BOOTSTRAP_JSON}" = "null" ]; then
     bashio::log.warning "Bootstrap history pull failed (exit ${EXIT_CODE}). stderr: $(head -c 200 /tmp/vico_bootstrap_error.log 2>/dev/null)"
@@ -335,7 +278,7 @@ publish_device_health() {
   camera_id=$(echo "${device_json}" | jq -r '.serialNumber // .deviceId // .device_id // .camera_id // .camera.uuid // .cameraId // empty')
   if [ -z "${camera_id}" ] || [ "${camera_id}" = "null" ]; then
     bashio::log.debug "Device payload missing serial/camera ID, skipping health publish."
-    return 0
+    return
   fi
 
   local camera_name
@@ -397,14 +340,10 @@ publish_device_health() {
   timestamp=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 
   local telemetry_payload
-  if ! telemetry_payload=$(echo "${device_json}" | jq -c \
+  telemetry_payload=$(echo "${device_json}" | jq -c \
     --arg timestamp "${timestamp}" \
     --argjson online "${online_json}" \
     '{batteryLevel:(.batteryLevel // .battery_percent // .batteryPercent // .battery // null), signalStrength:(.signalStrength // .signal_strength // .signalDbm // .signal_dbm // .wifiStrength // .rssi // null), online:$online, ip:(.ip // ""), timestamp:$timestamp}')
-  then
-    bashio::log.warning "Failed to parse telemetry payload for ${safe_id}; skipping publish this cycle."
-    return 0
-  fi
 
   local battery_summary
   battery_summary=$(echo "${telemetry_payload}" | jq -r 'if .batteryLevel == null then "null" else (.batteryLevel|tostring) end')
@@ -426,29 +365,24 @@ publish_device_health() {
 poll_device_health() {
   bashio::log.info "Polling vico-cli for device info..."
 
-  local devices_output=""
-  local exit_code=0
-  if ! devices_output=$(/usr/local/bin/vico-cli --region "${REGION}" devices list --format json 2>/tmp/vico_devices_error.log); then
-    exit_code=$?
-    devices_output=""
-  fi
-
-  maybe_warn_region_mismatch "devices list" "${devices_output}" "/tmp/vico_devices_error.log"
+  local devices_output
+  devices_output=$(/usr/local/bin/vico-cli devices list --format json 2>/tmp/vico_devices_error.log)
+  local exit_code=$?
 
   if [ ${exit_code} -ne 0 ]; then
     bashio::log.warning "vico-cli devices list exited with code ${exit_code}."
     bashio::log.warning "stderr (first 200 chars): $(head -c 200 /tmp/vico_devices_error.log 2>/dev/null)"
-    return 0
+    return
   fi
 
   if [ -z "${devices_output}" ] || [ "${devices_output}" = "null" ]; then
     bashio::log.info "vico-cli devices list returned no data."
-    return 0
+    return
   fi
 
   if ! echo "${devices_output}" | jq -e 'type=="array"' >/dev/null 2>&1; then
     bashio::log.warning "Device list output was not JSON array, skipping telemetry publish."
-    return 0
+    return
   fi
 
   local device_count
@@ -456,7 +390,7 @@ poll_device_health() {
   bashio::log.info "vico-cli devices list returned ${device_count} device(s) for telemetry publishing."
   bashio::log.debug "Device list payload preview: $(echo "${devices_output}" | tr -d '\n' | head -c 400)"
 
-  if ! echo "${devices_output}" | jq -c '.[]' | while read -r device; do
+  echo "${devices_output}" | jq -c '.[]' | while read -r device; do
     publish_device_health "${device}"
   done
 }
@@ -483,16 +417,8 @@ while true; do
   poll_device_health
   bashio::log.info "Polling vico-cli for events..."
 
-  events_exit=0
-  events_output=""
-  if ! events_output=$(/usr/local/bin/vico-cli --region "${REGION}" events list --format json 2>/tmp/vico_error.log); then
-    events_exit=$?
-    events_output=""
-  fi
-  JSON_OUTPUT="${events_output}"
-  EXIT_CODE=${events_exit}
-
-  maybe_warn_region_mismatch "events list" "${JSON_OUTPUT}" "/tmp/vico_error.log"
+  JSON_OUTPUT=$(/usr/local/bin/vico-cli events list --format json 2>/tmp/vico_error.log)
+  EXIT_CODE=$?
 
   if [ ${EXIT_CODE} -ne 0 ]; then
     bashio::log.error "vico-cli exited with code ${EXIT_CODE}."
@@ -508,9 +434,16 @@ while true; do
     continue
   fi
 
-  if [ ${EXIT_CODE} -eq 0 ] && string_contains "${JSON_OUTPUT}" "No events found"; then
+  if [ ${EXIT_CODE} -eq 0 ] && echo "${JSON_OUTPUT}" | grep -q "No events found"; then
     bashio::log.info "vico-cli reported no events in the recent window."
     run_bootstrap_history
+    sleep "${POLL_INTERVAL}"
+    continue
+  fi
+
+  if [ ${EXIT_CODE} -eq 0 ] && echo "${JSON_OUTPUT}" | grep -q "No events found"; then
+    bashio::log.info "vico-cli reported no events in the recent window."
+    bootstrap_history_if_needed
     sleep "${POLL_INTERVAL}"
     continue
   fi
@@ -518,7 +451,7 @@ while true; do
   bashio::log.info "vico-cli output (first 200 chars): $(echo "${JSON_OUTPUT}" | head -c 200)"
 
   # Quick sanity check so we don't feed clearly non-JSON into jq
-  first_char="${JSON_OUTPUT:0:1}"
+  first_char=$(printf '%s' "${JSON_OUTPUT}" | sed -n '1s/^\(.\).*$/\1/p')
   if [ "${first_char}" != "[" ] && [ "${first_char}" != "{" ]; then
     bashio::log.info "vico-cli output does not look like JSON (starts with '${first_char}'), skipping parse this cycle."
     sleep "${POLL_INTERVAL}"

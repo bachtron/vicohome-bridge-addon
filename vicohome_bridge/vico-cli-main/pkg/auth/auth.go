@@ -17,6 +17,73 @@ import (
 	"github.com/dydx/vico-cli/pkg/cache"
 )
 
+const (
+	defaultUSAPIBase = "https://api-us.vicohome.io"
+	defaultEUAPIBase = "https://api-eu.vicoo.tech"
+)
+
+// sanitizeAPIBase trims whitespace and trailing slashes from an API base URL so
+// we can safely append endpoint paths without producing duplicated separators.
+func sanitizeAPIBase(base string) string {
+	base = strings.TrimSpace(base)
+	return strings.TrimRight(base, "/")
+}
+
+// BuildAPIURL returns the fully qualified Vicohome API URL for the provided
+// endpoint path, honoring the configured region or override environment
+// variables.
+func BuildAPIURL(endpoint string) string {
+	base := GetAPIBaseURL()
+	if strings.HasPrefix(endpoint, "/") {
+		return fmt.Sprintf("%s%s", base, endpoint)
+	}
+	return fmt.Sprintf("%s/%s", base, endpoint)
+}
+
+// GetAPIBaseURL returns the Vicohome API base derived from environment
+// variables. Priority:
+//  1. VICOHOME_API_BASE override (trimmed, trailing slashes removed)
+//  2. Region (VICOHOME_REGION) selection with defaults for US/EU
+//  3. US API base as the global fallback
+func GetAPIBaseURL() string {
+	override := sanitizeAPIBase(os.Getenv("VICOHOME_API_BASE"))
+	if override != "" {
+		return override
+	}
+	region := strings.ToLower(strings.TrimSpace(os.Getenv("VICOHOME_REGION")))
+	switch region {
+	case "eu":
+		return defaultEUAPIBase
+	case "us", "auto", "":
+		return defaultUSAPIBase
+	default:
+		return defaultUSAPIBase
+	}
+}
+
+// GetCountryCode returns the ISO-style country code used by the Vicohome API
+// request payloads. When the user explicitly sets the region we return the
+// matching country; otherwise we attempt to infer it from the effective API
+// base URL so overrides continue to work.
+func GetCountryCode() string {
+	region := strings.ToLower(strings.TrimSpace(os.Getenv("VICOHOME_REGION")))
+	switch region {
+	case "eu":
+		return "EU"
+	case "us":
+		return "US"
+	case "auto", "":
+		break
+	default:
+		break
+	}
+	base := strings.ToLower(GetAPIBaseURL())
+	if strings.Contains(base, "-eu") || strings.Contains(base, "vicoo.tech") {
+		return "EU"
+	}
+	return "US"
+}
+
 // Error codes from the API
 const (
 	ErrorAccountKicked = -1024 // Account has been kicked offline
@@ -35,92 +102,6 @@ func isDebugMode() bool {
 func logDebug(format string, args ...interface{}) {
 	if isDebugMode() {
 		fmt.Fprintf(os.Stderr, format, args...)
-	}
-}
-
-// GetAPIBaseURL resolves the Vicohome API base URL based on environment variables.
-// Precedence:
-// 1. VICOHOME_API_BASE: explicit full URL (highest priority)
-// 2. VICOHOME_REGION: shorthand region selector (e.g. "us", "eu")
-// 3. Default fallback to the US API endpoint
-func GetAPIBaseURL() string {
-	if rawBase := strings.TrimSpace(os.Getenv("VICOHOME_API_BASE")); rawBase != "" {
-		return strings.TrimRight(rawBase, "/")
-	}
-
-	region := strings.ToLower(strings.TrimSpace(os.Getenv("VICOHOME_REGION")))
-	switch region {
-	case "eu", "europe":
-		return "https://api-eu.vicoo.tech"
-	case "us", "", "default", "na", "na1":
-		return "https://api-us.vicohome.io"
-	default:
-		if strings.HasPrefix(region, "http://") || strings.HasPrefix(region, "https://") {
-			return strings.TrimRight(region, "/")
-		}
-		return "https://api-us.vicohome.io"
-	}
-}
-
-// GetCountryCode derives the best-fit country hint for API requests based on the
-// configured region or API base. Some Vicohome endpoints (notably the device
-// list calls used for telemetry) appear to scope their responses to the
-// provided country code, so EU deployments need something other than the
-// previously hard-coded "US".
-func GetCountryCode() string {
-	region := strings.ToLower(strings.TrimSpace(os.Getenv("VICOHOME_REGION")))
-	base := strings.ToLower(strings.TrimSpace(os.Getenv("VICOHOME_API_BASE")))
-
-	// If the API base clearly targets the EU shard, respect that even when the
-	// region environment variable is unset or still sitting at the default US
-	// value from the add-on configuration.
-	if strings.Contains(base, "api-eu") {
-		switch region {
-		case "", "us", "default", "na", "na1":
-			region = "eu"
-		}
-	}
-
-	switch region {
-	case "eu", "europe":
-		return "EU"
-	case "us", "", "default", "na", "na1":
-		return "US"
-	default:
-		if strings.HasPrefix(region, "http://") || strings.HasPrefix(region, "https://") {
-			return "US"
-		}
-		if len(region) == 2 {
-			return strings.ToUpper(region)
-		}
-		return "US"
-	}
-}
-
-// GetRegionHint returns the best available region identifier that other packages
-// can embed in their responses. The logic mirrors the heuristics used by
-// GetCountryCode so EU deployments that override only the API base still report
-// the correct region hint.
-func GetRegionHint() string {
-	region := strings.ToLower(strings.TrimSpace(os.Getenv("VICOHOME_REGION")))
-	base := strings.ToLower(strings.TrimSpace(os.Getenv("VICOHOME_API_BASE")))
-
-	if region == "" {
-		if strings.Contains(base, "api-eu") {
-			region = "eu"
-		}
-	}
-
-	switch region {
-	case "eu", "europe":
-		return "eu"
-	case "", "us", "default", "na", "na1":
-		return "us"
-	default:
-		if strings.HasPrefix(region, "http://") || strings.HasPrefix(region, "https://") {
-			return "us"
-		}
-		return region
 	}
 }
 
@@ -214,8 +195,8 @@ func authenticateDirectly() (string, error) {
 		return "", fmt.Errorf("error marshaling login request: %w", err)
 	}
 
-	baseURL := GetAPIBaseURL()
-	req, err := http.NewRequest("POST", baseURL+"/account/login", bytes.NewBuffer(reqBody))
+	loginURL := BuildAPIURL("/account/login")
+	req, err := http.NewRequest("POST", loginURL, bytes.NewBuffer(reqBody))
 	if err != nil {
 		return "", fmt.Errorf("error creating request: %w", err)
 	}

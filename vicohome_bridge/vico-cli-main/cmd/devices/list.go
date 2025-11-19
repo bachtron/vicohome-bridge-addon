@@ -97,10 +97,9 @@ func init() {
 // This function handles the API request, response parsing, and error handling including
 // authentication refreshes when needed.
 func listDevices(token string) ([]Device, error) {
-	countryCode := auth.GetCountryCode()
 	req := DeviceListRequest{
 		Language:  "en",
-		CountryNo: countryCode,
+		CountryNo: auth.GetCountryCode(),
 	}
 
 	reqBody, err := json.Marshal(req)
@@ -108,8 +107,8 @@ func listDevices(token string) ([]Device, error) {
 		return nil, fmt.Errorf("error marshaling request: %w", err)
 	}
 
-	baseURL := auth.GetAPIBaseURL()
-	httpReq, err := http.NewRequest("POST", baseURL+"/device/listuserdevices", bytes.NewBuffer(reqBody))
+	apiURL := auth.BuildAPIURL("/device/listuserdevices")
+	httpReq, err := http.NewRequest("POST", apiURL, bytes.NewBuffer(reqBody))
 	if err != nil {
 		return nil, fmt.Errorf("error creating request: %w", err)
 	}
