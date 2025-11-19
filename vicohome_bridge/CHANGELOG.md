@@ -1,5 +1,9 @@
 # Vicohome Bridge Add-on Changelog
 
+## 1.5.5
+- Ensured every `grep -E` check in `maybe_warn_region_mismatch()` passes `--` before patterns like `-1001`, so BusyBox no longer
+  mistakes the pattern for CLI flags and spams "grep: unrecognized option: 1" during event polling.
+
 ## 1.5.4
 - Hardened the region-mismatch detector in `run.sh` by making every `grep` invocation BusyBox-compatible (explicit `--` before the
   `-1001` pattern), eliminating the "grep: unrecognized option: 1" errors that appeared after event polling when Vicohome
