@@ -71,12 +71,13 @@ Times should be in format: 2025-05-18 14:59:25`,
 
 		startTimestamp := fmt.Sprintf("%d", start.Unix())
 		endTimestamp := fmt.Sprintf("%d", end.Unix())
+		countryCode := auth.GetCountryCode()
 
 		eventsReq := Request{
 			StartTimestamp: startTimestamp,
 			EndTimestamp:   endTimestamp,
 			Language:       "en",
-			CountryNo:      "US",
+			CountryNo:      countryCode,
 		}
 
 		events, err := fetchEvents(token, eventsReq)
@@ -141,7 +142,12 @@ func parseTimestamp(timestamp string) (time.Time, error) {
 }
 
 func init() {
-	currentTime := time.Now()
+	// Use UTC when generating the default window so the parsed timestamps
+	// match the actual current time regardless of the host's timezone. When we
+	// previously formatted the defaults in the local timezone (e.g. America/Los_Angeles)
+	// but parsed them as UTC, the effective window ended several hours in the past,
+	// preventing the bridge from ever seeing the most recent events.
+	currentTime := time.Now().UTC()
 	defaultStart := currentTime.Add(-24 * time.Hour).Format("2006-01-02 15:04:05")
 	defaultEnd := currentTime.Format("2006-01-02 15:04:05")
 
@@ -160,7 +166,8 @@ func fetchEvents(token string, request Request) ([]Event, error) {
 		return nil, fmt.Errorf("error marshaling request: %w", err)
 	}
 
-	req, err := http.NewRequest("POST", "https://api-us.vicohome.io/library/newselectlibrary", bytes.NewBuffer(reqBody))
+	baseURL := auth.GetAPIBaseURL()
+	req, err := http.NewRequest("POST", baseURL+"/library/newselectlibrary", bytes.NewBuffer(reqBody))
 	if err != nil {
 		return nil, fmt.Errorf("error creating request: %w", err)
 	}

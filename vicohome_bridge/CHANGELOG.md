@@ -1,5 +1,55 @@
 # Vicohome Bridge Add-on Changelog
 
+## 1.5.8
+- Removed the experimental direct-stream export plumbing and its HTTP mirror from
+  the add-on scripts/configuration so the focus returns to the core MQTT
+  discovery, telemetry, and multi-region event polling features.
+- Updated the README to reflect the current installation/operation flow.
+
+## 1.5.7
+- Hardened the region mismatch detector by using POSIX character classes in the
+  BusyBox-compatible `grep` checks, ensuring the add-on can safely detect `-1001`
+  errors without tripping over unsupported numeric options.
+- Documented the rebuild process in the README so users running from a git
+  checkout know they must reinstall/rebuild the add-on after pulling new
+  commits to pick up fixes like the `grep` compatibility patches.
+
+## 1.5.6
+- Updated the Last Event MQTT discovery template to use `value_json.get(...)` lookups so Home Assistant no longer logs template
+  warnings when Vicohome payloads omit `eventType`/`type` fields, while still falling back to `unknown` when no type is present.
+
+## 1.5.5
+- Ensured every `grep -E` check in `maybe_warn_region_mismatch()` passes `--` before patterns like `-1001`, so BusyBox no longer
+  mistakes the pattern for CLI flags and spams "grep: unrecognized option: 1" during event polling.
+
+## 1.5.4
+- Hardened the region-mismatch detector in `run.sh` by making every `grep` invocation BusyBox-compatible (explicit `--` before the
+  `-1001` pattern), eliminating the "grep: unrecognized option: 1" errors that appeared after event polling when Vicohome
+  returned those error codes.
+
+## 1.5.3
+- Replaced the ad-hoc "No events found" check in `run.sh` with a helper that uses BusyBox-safe `grep -F -q` semantics so event
+  polling never invokes unsupported `grep -1` flags and the add-on stops logging "grep: unrecognized option: 1" after every
+  empty window.
+- Updated the vendored `vico-cli` installer script to request the latest release tag with `grep -m 1`, ensuring BusyBox systems
+  only rely on options that are actually implemented.
+
+## 1.5.2
+- Make `vico-cli` derive the correct `countryNo` from the configured API base even when the add-on's default `region` value is
+  still set to `us`, so EU installations that only override `api_base` also receive telemetry/metadata instead of "unknown"
+  devices.
+
+## 1.5.1
+- Fixed the `vico-cli devices` and event helpers to send a region-aware `countryNo`, so EU deployments now receive the same
+  camera metadata/telemetry as US users instead of "unknown" devices.
+
+## 1.3.0
+- Added regional awareness to `vico-cli` so the bridge can authenticate and poll either the US or EU Vicohome shards (or any
+  fully-qualified custom API host) based on the new configuration options.
+- Introduced `region` / `api_base` add-on options and exported them as `VICOHOME_REGION` / `VICOHOME_API_BASE` environment
+  variables so the integration defaults to the US cloud but can be pointed at EU or white-label deployments without custom
+  images.
+
 ## 1.2.2
 - Extended the bootstrap history pull to cover the last 5 days of Vicohome activity so Last Event sensors populate even when your account has been idle for more than a day.
 
