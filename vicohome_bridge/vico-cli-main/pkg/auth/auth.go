@@ -97,6 +97,33 @@ func GetCountryCode() string {
 	}
 }
 
+// GetRegionHint returns the best available region identifier that other packages
+// can embed in their responses. The logic mirrors the heuristics used by
+// GetCountryCode so EU deployments that override only the API base still report
+// the correct region hint.
+func GetRegionHint() string {
+	region := strings.ToLower(strings.TrimSpace(os.Getenv("VICOHOME_REGION")))
+	base := strings.ToLower(strings.TrimSpace(os.Getenv("VICOHOME_API_BASE")))
+
+	if region == "" {
+		if strings.Contains(base, "api-eu") {
+			region = "eu"
+		}
+	}
+
+	switch region {
+	case "eu", "europe":
+		return "eu"
+	case "", "us", "default", "na", "na1":
+		return "us"
+	default:
+		if strings.HasPrefix(region, "http://") || strings.HasPrefix(region, "https://") {
+			return "us"
+		}
+		return region
+	}
+}
+
 // LoginRequest represents the JSON request body sent to the Vicohome API
 // during authentication.
 type LoginRequest struct {
