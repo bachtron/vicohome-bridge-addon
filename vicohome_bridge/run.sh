@@ -397,10 +397,14 @@ publish_device_health() {
   timestamp=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 
   local telemetry_payload
-  telemetry_payload=$(echo "${device_json}" | jq -c \
+  if ! telemetry_payload=$(echo "${device_json}" | jq -c \
     --arg timestamp "${timestamp}" \
     --argjson online "${online_json}" \
     '{batteryLevel:(.batteryLevel // .battery_percent // .batteryPercent // .battery // null), signalStrength:(.signalStrength // .signal_strength // .signalDbm // .signal_dbm // .wifiStrength // .rssi // null), online:$online, ip:(.ip // ""), timestamp:$timestamp}')
+  then
+    bashio::log.warning "Failed to parse telemetry payload for ${safe_id}; skipping publish this cycle."
+    return 0
+  fi
 
   local battery_summary
   battery_summary=$(echo "${telemetry_payload}" | jq -r 'if .batteryLevel == null then "null" else (.batteryLevel|tostring) end')
@@ -434,17 +438,17 @@ poll_device_health() {
   if [ ${exit_code} -ne 0 ]; then
     bashio::log.warning "vico-cli devices list exited with code ${exit_code}."
     bashio::log.warning "stderr (first 200 chars): $(head -c 200 /tmp/vico_devices_error.log 2>/dev/null)"
-    return
+    return 0
   fi
 
   if [ -z "${devices_output}" ] || [ "${devices_output}" = "null" ]; then
     bashio::log.info "vico-cli devices list returned no data."
-    return
+    return 0
   fi
 
   if ! echo "${devices_output}" | jq -e 'type=="array"' >/dev/null 2>&1; then
     bashio::log.warning "Device list output was not JSON array, skipping telemetry publish."
-    return
+    return 0
   fi
 
   local device_count
@@ -452,7 +456,7 @@ poll_device_health() {
   bashio::log.info "vico-cli devices list returned ${device_count} device(s) for telemetry publishing."
   bashio::log.debug "Device list payload preview: $(echo "${devices_output}" | tr -d '\n' | head -c 400)"
 
-  echo "${devices_output}" | jq -c '.[]' | while read -r device; do
+  if ! echo "${devices_output}" | jq -c '.[]' | while read -r device; do
     publish_device_health "${device}"
   done
 }
