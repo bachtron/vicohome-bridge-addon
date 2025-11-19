@@ -15,16 +15,9 @@ BASE_TOPIC=$(bashio::config 'base_topic')
 REGION=$(bashio::config 'region')
 API_BASE=$(bashio::config 'api_base')
 BOOTSTRAP_HISTORY=$(bashio::config 'bootstrap_history')
-WEBRTC_ENABLED=$(bashio::config 'webrtc_enabled')
-WEBRTC_MODE=$(bashio::config 'webrtc_mode')
-WEBRTC_POLL_INTERVAL=$(bashio::config 'webrtc_poll_interval')
-GO2RTC_ENABLED=$(bashio::config 'go2rtc_enabled')
-GO2RTC_URL=$(bashio::config 'go2rtc_url')
-GO2RTC_STREAM_PREFIX=$(bashio::config 'go2rtc_stream_prefix')
 
 [ -z "${BOOTSTRAP_HISTORY}" ] && BOOTSTRAP_HISTORY="false"
 HAS_BOOTSTRAPPED="false"
-COMMAND_LISTENER_PID=""
 
 # Defaults
 [ -z "${POLL_INTERVAL}" ] && POLL_INTERVAL=60
@@ -482,260 +475,6 @@ poll_device_health() {
   done
 }
 
-publish_p2p_status() {
-  local safe_id="$1"
-  local state="$2"
-  local message="$3"
-  local timestamp
-  timestamp=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
-
-  local payload
-  if ! payload=$(jq -nc --arg state "${state}" --arg message "${message}" --arg timestamp "${timestamp}" '{state:$state,message:$message,timestamp:$timestamp}' 2>/dev/null); then
-    payload="{\"state\":\"${state}\",\"message\":\"${message}\",\"timestamp\":\"${timestamp}\"}"
-  fi
-
-  mosquitto_pub ${MQTT_ARGS} \
-    -t "${BASE_TOPIC}/${safe_id}/p2p_status" \
-    -m "${payload}" \
-    -q 0 || bashio::log.warning "Failed to publish P2P status for ${safe_id}"
-}
-
-publish_webrtc_ticket() {
-  local safe_id="$1"
-  local ticket_json="$2"
-
-  mosquitto_pub ${MQTT_ARGS} \
-    -t "${BASE_TOPIC}/${safe_id}/webrtc_ticket" \
-    -m "${ticket_json}" \
-    -q 0 || bashio::log.warning "Failed to publish WebRTC ticket payload for ${safe_id}"
-}
-
-determine_stream_from_payload() {
-  local payload="$1"
-  local stream=""
-
-  if [ -n "${payload}" ]; then
-    local parsed
-    parsed=$(echo "${payload}" | jq -r '.stream // .Stream // empty' 2>/dev/null)
-    if [ -n "${parsed}" ] && [ "${parsed}" != "null" ]; then
-      stream="${parsed}"
-    fi
-  fi
-
-  if [ -z "${stream}" ]; then
-    case "${payload}" in
-      main|MAIN|Main)
-        stream="main"
-        ;;
-      sub|SUB|Sub)
-        stream="sub"
-        ;;
-      *)
-        ;;
-    esac
-  fi
-
-  if [ -z "${stream}" ]; then
-    stream="main"
-  fi
-
-  echo "${stream}" | tr '[:lower:]' '[:upper:]'
-}
-
-request_webrtc_ticket() {
-  local camera_id="$1"
-  local stream="$2"
-  local safe_id="$3"
-
-  local ticket_json
-  ticket_json=$(/usr/local/bin/vico-cli p2p session --device "${camera_id}" --stream "${stream}" 2>/tmp/vico_webrtc_error.log)
-  local exit_code=$?
-
-  if [ ${exit_code} -ne 0 ]; then
-    local stderr_preview
-    stderr_preview=$(head -c 200 /tmp/vico_webrtc_error.log 2>/dev/null)
-    bashio::log.warning "vico-cli p2p session failed for ${camera_id} (exit ${exit_code}). stderr: ${stderr_preview}"
-    publish_p2p_status "${safe_id}" "error" "vico-cli p2p session failed (exit ${exit_code})"
-    return 1
-  fi
-
-  if [ -z "${ticket_json}" ] || [ "${ticket_json}" = "null" ]; then
-    bashio::log.warning "vico-cli p2p session returned empty payload for ${camera_id}"
-    publish_p2p_status "${safe_id}" "error" "Empty WebRTC ticket payload"
-    return 1
-  fi
-
-  if ! echo "${ticket_json}" | jq -e '.' >/dev/null 2>&1; then
-    bashio::log.warning "WebRTC ticket payload for ${camera_id} was not JSON. Payload preview: $(echo "${ticket_json}" | tr -d '\n' | head -c 200)"
-    publish_p2p_status "${safe_id}" "error" "Invalid WebRTC ticket payload"
-    return 1
-  fi
-
-  echo "${ticket_json}"
-  return 0
-}
-
-start_webrtc_session() {
-  local safe_id="$1"
-  local payload="$2"
-
-  local stream
-  stream=$(determine_stream_from_payload "${payload}")
-  local camera_id
-  camera_id=$(lookup_camera_id "${safe_id}")
-
-  if [ -z "${camera_id}" ]; then
-    bashio::log.info "No cached device ID for ${safe_id}; refreshing device cache for WebRTC request."
-    poll_device_health
-    camera_id=$(lookup_camera_id "${safe_id}")
-  fi
-
-  if [ -z "${camera_id}" ]; then
-    local error_msg="Cannot start WebRTC session for ${safe_id}: unknown camera mapping."
-    bashio::log.warning "${error_msg}"
-    publish_p2p_status "${safe_id}" "error" "${error_msg}"
-    return
-  fi
-
-  local camera_name
-  camera_name=$(lookup_camera_name "${safe_id}")
-  if [ -z "${camera_name}" ]; then
-    camera_name="Camera ${camera_id}"
-  fi
-
-  publish_p2p_status "${safe_id}" "starting" "Requesting WebRTC ticket for ${camera_name} (${stream})"
-  local ticket_json
-  if ! ticket_json=$(request_webrtc_ticket "${camera_id}" "${stream}" "${safe_id}"); then
-    return
-  fi
-
-  publish_webrtc_ticket "${safe_id}" "${ticket_json}"
-
-  local session_id
-  session_id=$(echo "${ticket_json}" | jq -r '.openResponse.data.connectionId // .openResponse.data.connectId // .openResponse.data.channelId // .openResponse.data.sessionId // empty' 2>/dev/null)
-  remember_p2p_session "${safe_id}" "${camera_id}" "${session_id}"
-  publish_p2p_status "${safe_id}" "ticket" "WebRTC ticket published for ${camera_name} (${stream})"
-}
-
-close_webrtc_session() {
-  local safe_id="$1"
-
-  local session_data
-  session_data=$(read_p2p_session "${safe_id}")
-  local camera_id=""
-  local session_id=""
-
-  if [ -n "${session_data}" ]; then
-    camera_id=${session_data%%|*}
-    session_id=${session_data#${camera_id}|}
-  fi
-
-  if [ -z "${camera_id}" ]; then
-    camera_id=$(lookup_camera_id "${safe_id}")
-  fi
-
-  if [ -z "${camera_id}" ]; then
-    publish_p2p_status "${safe_id}" "error" "Cannot close WebRTC session: unknown camera mapping"
-    return
-  fi
-
-  local camera_name
-  camera_name=$(lookup_camera_name "${safe_id}")
-  if [ -z "${camera_name}" ]; then
-    camera_name="Camera ${camera_id}"
-  fi
-
-  publish_p2p_status "${safe_id}" "closing" "Closing WebRTC session for ${camera_name}"
-
-  local close_output
-  local exit_code
-  if [ -n "${session_id}" ] && [ "${session_id}" != "${camera_id}" ]; then
-    close_output=$(/usr/local/bin/vico-cli p2p close --device "${camera_id}" --session "${session_id}" 2>/tmp/vico_webrtc_close_error.log)
-    exit_code=$?
-  else
-    close_output=$(/usr/local/bin/vico-cli p2p close --device "${camera_id}" 2>/tmp/vico_webrtc_close_error.log)
-    exit_code=$?
-  fi
-
-  if [ ${exit_code} -ne 0 ]; then
-    local stderr_preview
-    stderr_preview=$(head -c 200 /tmp/vico_webrtc_close_error.log 2>/dev/null)
-    bashio::log.warning "vico-cli p2p close failed for ${camera_id} (exit ${exit_code}). stderr: ${stderr_preview}"
-    publish_p2p_status "${safe_id}" "error" "vico-cli p2p close failed (exit ${exit_code})"
-  else
-    bashio::log.debug "WebRTC close response for ${camera_id}: ${close_output}"
-    publish_p2p_status "${safe_id}" "closed" "WebRTC session closed for ${camera_name}"
-  fi
-
-  clear_p2p_session "${safe_id}"
-}
-
-handle_command_message() {
-  local topic="$1"
-  local payload="$2"
-
-  case "${topic}" in
-    "${BASE_TOPIC}/"*)
-      ;;
-    *)
-      return
-      ;;
-  esac
-
-  local remainder="${topic#${BASE_TOPIC}/}"
-  case "${remainder}" in
-    */cmd/*)
-      ;;
-    *)
-      return
-      ;;
-  esac
-
-  local safe_id="${remainder%%/cmd/*}"
-  local command_path="${remainder#${safe_id}/cmd/}"
-
-  if [ -z "${safe_id}" ] || [ -z "${command_path}" ]; then
-    return
-  fi
-
-  case "${command_path}" in
-    live_on)
-      start_webrtc_session "${safe_id}" "${payload}"
-      ;;
-    live_off)
-      close_webrtc_session "${safe_id}"
-      ;;
-    *)
-      bashio::log.debug "Ignoring unknown MQTT command path '${command_path}' for ${safe_id}"
-      ;;
-  esac
-}
-
-start_command_listener() {
-  bashio::log.info "Starting MQTT command listener on ${BASE_TOPIC}/+/cmd/#"
-  (
-    while true; do
-      mosquitto_sub ${MQTT_ARGS} -t "${BASE_TOPIC}/+/cmd/#" -v | while IFS= read -r line; do
-        [ -z "${line}" ] && continue
-        local topic="${line%% *}"
-        local payload=""
-        if [ "${topic}" = "${line}" ]; then
-          payload=""
-        else
-          payload=${line#"${topic}"}
-          payload=${payload# }
-        fi
-        handle_command_message "${topic}" "${payload}"
-      done
-      bashio::log.warning "MQTT command listener exited unexpectedly, restarting in 5 seconds..."
-      sleep 5
-    done
-  ) &
-
-  COMMAND_LISTENER_PID=$!
-  bashio::log.info "MQTT command listener started (PID ${COMMAND_LISTENER_PID})."
-}
-
 # ==========================
 #  Optional: log vico-cli version
 # ==========================
@@ -750,8 +489,6 @@ fi
 
 bashio::log.info "Starting Vicohome Bridge main loop: polling every ${POLL_INTERVAL}s"
 bashio::log.info "NOTE: Entities are created lazily when events are received."
-
-start_webrtc_request_listener
 
 # ==========================
 #  Main loop
@@ -856,8 +593,6 @@ while true; do
       publish_motion_pulse "${SAFE_ID}"
     fi
   fi
-
-  maybe_poll_webrtc_tickets
 
   sleep "${POLL_INTERVAL}"
 done
