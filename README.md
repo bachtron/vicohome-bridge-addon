@@ -158,6 +158,22 @@ WebRTC/go2rtc features actually make it into your running container.
 
 ---
 
+### 2b. Rebuild after pulling new commits
+
+If you're running this repository from a local checkout (instead of the published
+Supervisor store version), you need to **rebuild** the add-on every time you
+pull new commits:
+
+1. Go to **Settings → Add-ons → Vicohome Bridge**.
+2. Click **Rebuild** (or **Install** again) so Home Assistant repackages the
+   updated `run.sh`, vendored `vico-cli`, and configuration defaults.
+3. Start the add-on once the rebuild finishes.
+
+This ensures fixes like the BusyBox `grep` compatibility patches and region
+updates actually make it into your running container.
+
+---
+
 ### 3. Ensure MQTT is configured
 
 The add-on uses Supervisor **service discovery** to find your MQTT broker.
@@ -1069,6 +1085,23 @@ The `name` comes from `go2rtc_stream_prefix + <safe_id>` so it lines up with the
 3. go2rtc receives the mirrored POST with the full ticket JSON and can update a stream named `vicohome_<safe_id>` without needing another MQTT listener.
 
 You can continue to consume the MQTT ticket topic in parallel; the HTTP POST is just a convenience so go2rtc-based setups have a consistent entry point even if they cannot subscribe to MQTT directly.
+
+---
+
+## Notes & limitations
+
+- The add-on currently focuses on Vicohome's **cloud event feed**. Motion snapshots,
+  clip URLs, telemetry, and MQTT discovery all come from the Vicohome APIs polled
+  by `vico-cli`.
+- The previous experimental **P2P/WebRTC ticket export** (and the optional
+  go2rtc HTTP mirror) have been removed for now because they required a fragile
+  amount of camera wake-ups and duplicated code inside the add-on. You still get
+  the full multi-region support and MQTT entity set described above, and if a
+  future version stabilizes the WebRTC workflow it may return behind a cleaner
+  interface.
+- If you are outside the US shard, set the `region` option to `eu` (or provide
+  a full `api_base`) so authentication, telemetry, and event polling go to the
+  right Vicohome backend.
 
 ---
 

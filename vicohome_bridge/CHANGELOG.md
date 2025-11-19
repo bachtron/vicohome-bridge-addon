@@ -1,5 +1,12 @@
 # Vicohome Bridge Add-on Changelog
 
+## 1.5.8
+- Removed the experimental WebRTC / go2rtc ticket export plumbing from the add-on
+  scripts and configuration so the focus returns to the core MQTT discovery,
+  telemetry, and multi-region event polling features.
+- Updated the README to reflect the current installation/operation flow and to
+  call out that P2P/WebRTC support has been pulled back for now.
+
 ## 1.5.7
 - Hardened the region mismatch detector by using POSIX character classes in the
   BusyBox-compatible `grep` checks, ensuring the add-on can safely detect `-1001`
