@@ -1,5 +1,14 @@
 # Vicohome Bridge Add-on Changelog
 
+## 1.5.11
+- Fixed another startup regression where `poll_device_health` could bubble up
+  non-zero exit codes (for example when Vicohome temporarily returned no device
+  data), tripping the supervisor's restart loop before the main event poll even
+  began.
+- Ensured the telemetry helper always reports success after handling sparse
+  payloads so the add-on keeps running even when a camera disappears
+  momentarily.
+
 ## 1.5.10
 - Fixed a startup regression introduced while stripping the WebRTC helpers by
   hardening the `vico-cli` invocation wrappers so transient API failures no

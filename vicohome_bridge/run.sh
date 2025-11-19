@@ -335,7 +335,7 @@ publish_device_health() {
   camera_id=$(echo "${device_json}" | jq -r '.serialNumber // .deviceId // .device_id // .camera_id // .camera.uuid // .cameraId // empty')
   if [ -z "${camera_id}" ] || [ "${camera_id}" = "null" ]; then
     bashio::log.debug "Device payload missing serial/camera ID, skipping health publish."
-    return
+    return 0
   fi
 
   local camera_name
