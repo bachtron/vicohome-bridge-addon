@@ -71,13 +71,12 @@ Times should be in format: 2025-05-18 14:59:25`,
 
 		startTimestamp := fmt.Sprintf("%d", start.Unix())
 		endTimestamp := fmt.Sprintf("%d", end.Unix())
-		countryCode := auth.GetCountryCode()
 
 		eventsReq := Request{
 			StartTimestamp: startTimestamp,
 			EndTimestamp:   endTimestamp,
 			Language:       "en",
-			CountryNo:      countryCode,
+			CountryNo:      "US",
 		}
 
 		events, err := fetchEvents(token, eventsReq)
@@ -166,8 +165,7 @@ func fetchEvents(token string, request Request) ([]Event, error) {
 		return nil, fmt.Errorf("error marshaling request: %w", err)
 	}
 
-	baseURL := auth.GetAPIBaseURL()
-	req, err := http.NewRequest("POST", baseURL+"/library/newselectlibrary", bytes.NewBuffer(reqBody))
+	req, err := http.NewRequest("POST", "https://api-us.vicohome.io/library/newselectlibrary", bytes.NewBuffer(reqBody))
 	if err != nil {
 		return nil, fmt.Errorf("error creating request: %w", err)
 	}

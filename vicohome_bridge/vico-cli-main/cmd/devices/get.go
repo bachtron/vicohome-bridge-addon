@@ -79,11 +79,10 @@ func init() {
 // This function handles the API request, response parsing, and error handling including
 // authentication refreshes when needed.
 func getDevice(token string, serialNumber string) (Device, error) {
-	countryCode := auth.GetCountryCode()
 	req := DeviceRequest{
 		SerialNumber: serialNumber,
 		Language:     "en",
-		CountryNo:    countryCode,
+		CountryNo:    "US",
 	}
 
 	reqBody, err := json.Marshal(req)
@@ -91,8 +90,7 @@ func getDevice(token string, serialNumber string) (Device, error) {
 		return Device{}, fmt.Errorf("error marshaling request: %w", err)
 	}
 
-	baseURL := auth.GetAPIBaseURL()
-	httpReq, err := http.NewRequest("POST", baseURL+"/device/selectsingledevice", bytes.NewBuffer(reqBody))
+	httpReq, err := http.NewRequest("POST", "https://api-us.vicohome.io/device/selectsingledevice", bytes.NewBuffer(reqBody))
 	if err != nil {
 		return Device{}, fmt.Errorf("error creating request: %w", err)
 	}
