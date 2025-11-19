@@ -6,13 +6,12 @@
 package cmd
 
 import (
-	"fmt"
-	"os"
+"fmt"
+"os"
 
-	"github.com/dydx/vico-cli/cmd/devices"
-	"github.com/dydx/vico-cli/cmd/events"
-	"github.com/dydx/vico-cli/cmd/webrtc"
-	"github.com/spf13/cobra"
+"github.com/dydx/vico-cli/cmd/devices"
+"github.com/dydx/vico-cli/cmd/events"
+"github.com/spf13/cobra"
 )
 
 // Version is set during build via -ldflags.
@@ -49,15 +48,10 @@ var versionCmd = &cobra.Command{
 }
 
 func init() {
-	rootCmd.PersistentFlags().StringVar(&regionFlag, "region", "", "Vicohome region (auto, us, eu, or custom host)")
-	rootCmd.PersistentPreRun = func(cmd *cobra.Command, args []string) {
-		if regionFlag != "" {
-			os.Setenv("VICOHOME_REGION", regionFlag)
-		}
-	}
+// No persistent flags needed
 
-	rootCmd.AddCommand(devices.GetDevicesCmd())
-	rootCmd.AddCommand(events.GetEventsCmd())
-	rootCmd.AddCommand(webrtc.GetWebrtcCmd())
-	rootCmd.AddCommand(versionCmd)
+// Add the commands
+rootCmd.AddCommand(devices.GetDevicesCmd())
+rootCmd.AddCommand(events.GetEventsCmd())
+rootCmd.AddCommand(versionCmd)
 }

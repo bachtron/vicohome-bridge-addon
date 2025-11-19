@@ -174,6 +174,22 @@ updates actually make it into your running container.
 
 ---
 
+### 2b. Rebuild after pulling new commits
+
+If you're running this repository from a local checkout (instead of the published
+Supervisor store version), you need to **rebuild** the add-on every time you
+pull new commits:
+
+1. Go to **Settings → Add-ons → Vicohome Bridge**.
+2. Click **Rebuild** (or **Install** again) so Home Assistant repackages the
+   updated `run.sh`, vendored `vico-cli`, and configuration defaults.
+3. Start the add-on once the rebuild finishes.
+
+This ensures fixes like the BusyBox `grep` compatibility patches and region
+updates actually make it into your running container.
+
+---
+
 ### 3. Ensure MQTT is configured
 
 The add-on uses Supervisor **service discovery** to find your MQTT broker.
@@ -1099,6 +1115,17 @@ You can continue to consume the MQTT ticket topic in parallel; the HTTP POST is 
   the full multi-region support and MQTT entity set described above, and if a
   future version stabilizes the WebRTC workflow it may return behind a cleaner
   interface.
+- If you are outside the US shard, set the `region` option to `eu` (or provide
+  a full `api_base`) so authentication, telemetry, and event polling go to the
+  right Vicohome backend.
+
+---
+
+## Notes & limitations
+
+- The add-on focuses on Vicohome's **cloud event feed**. Motion snapshots,
+  clip URLs, telemetry, and MQTT discovery all come from the Vicohome APIs polled
+  by `vico-cli`.
 - If you are outside the US shard, set the `region` option to `eu` (or provide
   a full `api_base`) so authentication, telemetry, and event polling go to the
   right Vicohome backend.

@@ -1,11 +1,10 @@
 # Vicohome Bridge Add-on Changelog
 
 ## 1.5.8
-- Removed the experimental WebRTC / go2rtc ticket export plumbing from the add-on
-  scripts and configuration so the focus returns to the core MQTT discovery,
-  telemetry, and multi-region event polling features.
-- Updated the README to reflect the current installation/operation flow and to
-  call out that P2P/WebRTC support has been pulled back for now.
+- Removed the experimental direct-stream export plumbing and its HTTP mirror from
+  the add-on scripts/configuration so the focus returns to the core MQTT
+  discovery, telemetry, and multi-region event polling features.
+- Updated the README to reflect the current installation/operation flow.
 
 ## 1.5.7
 - Hardened the region mismatch detector by using POSIX character classes in the
@@ -43,16 +42,6 @@
 ## 1.5.1
 - Fixed the `vico-cli devices` and event helpers to send a region-aware `countryNo`, so EU deployments now receive the same
   camera metadata/telemetry as US users instead of "unknown" devices.
-
-## 1.5.0
-- Added an optional go2rtc bridge: every WebRTC ticket can now be mirrored to `http://go2rtc:1984/api/stream` using the `vicohome_<safe_id>` naming convention, making it easier for the go2rtc add-on to ingest Vicohome tickets without its own MQTT subscriber.
-- Introduced the `go2rtc_enabled`, `go2rtc_url`, and `go2rtc_stream_prefix` configuration options (disabled by default) so users can turn on the HTTP bridge only when a go2rtc instance is available.
-- Documented the HTTP payload structure and workflow in the README alongside the existing MQTT-based instructions.
-
-## 1.4.0
-- Added experimental WebRTC / P2P ticket export so power users can request Vicohome tickets over MQTT and hand them to go2rtc (or other tooling) without modifying the add-on image.
-- Introduced `webrtc_enabled`, `webrtc_mode`, and `webrtc_poll_interval` configuration options plus matching MQTT request/ticket/status topics while keeping the feature opt-in by default.
-- Documented the go2rtc tie-in pattern and WebRTC topic schema in the README so integrators have a consistent naming convention (`vicohome_<safe_id>` streams).
 
 ## 1.3.0
 - Added regional awareness to `vico-cli` so the bridge can authenticate and poll either the US or EU Vicohome shards (or any
