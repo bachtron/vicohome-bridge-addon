@@ -102,6 +102,31 @@ Get details for a specific event:
 ./vicohome events get [traceId]
 ```
 
+### WebRTC / P2P tickets
+
+Request a WebRTC ticket for a specific camera (identified by its serial number).
+The command always emits a single JSON object, making it easy to consume from
+other tooling like the Home Assistant Vicohome bridge or go2rtc automations:
+
+```bash
+./vicohome webrtc ticket --device d3a55f61c61f3b5d3bb8cb7489612f96 --format json
+```
+
+Example output:
+
+```json
+{
+  "deviceId": "d3a55f61c61f3b5d3bb8cb7489612f96",
+  "region": "us",
+  "ticket": "<opaque_webrtc_offer>",
+  "expiresAt": "2025-11-18T12:34:56Z",
+  "raw": {
+    "ticket": "<opaque_webrtc_offer>",
+    "expireTime": 1763456096
+  }
+}
+```
+
 ## Output Formats
 
 All commands support both table (default) and JSON output formats:
