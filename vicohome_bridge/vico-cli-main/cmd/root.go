@@ -11,6 +11,7 @@ import (
 
 	"github.com/dydx/vico-cli/cmd/devices"
 	"github.com/dydx/vico-cli/cmd/events"
+	"github.com/dydx/vico-cli/cmd/webrtc"
 	"github.com/spf13/cobra"
 )
 
@@ -52,5 +53,6 @@ func init() {
 	// Add the commands
 	rootCmd.AddCommand(devices.GetDevicesCmd())
 	rootCmd.AddCommand(events.GetEventsCmd())
+	rootCmd.AddCommand(webrtc.GetWebrtcCmd())
 	rootCmd.AddCommand(versionCmd)
 }
