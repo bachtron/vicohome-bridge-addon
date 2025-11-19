@@ -1,5 +1,13 @@
 # Vicohome Bridge Add-on Changelog
 
+## 1.5.7
+- Hardened the region mismatch detector by using POSIX character classes in the
+  BusyBox-compatible `grep` checks, ensuring the add-on can safely detect `-1001`
+  errors without tripping over unsupported numeric options.
+- Documented the rebuild process in the README so users running from a git
+  checkout know they must reinstall/rebuild the add-on after pulling new
+  commits to pick up fixes like the `grep` compatibility patches.
+
 ## 1.5.6
 - Updated the Last Event MQTT discovery template to use `value_json.get(...)` lookups so Home Assistant no longer logs template
   warnings when Vicohome payloads omit `eventType`/`type` fields, while still falling back to `unknown` when no type is present.

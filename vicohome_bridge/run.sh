@@ -428,7 +428,7 @@ maybe_warn_region_mismatch() {
   local match=""
   if printf '%s' "${payload}" | grep -qi -- 'ACCOUNT_NOT_REGISTERED'; then
     match="payload"
-  elif printf '%s' "${payload}" | grep -Eq -- '"(code|result)"\s*:\s*-?1001'; then
+  elif printf '%s' "${payload}" | grep -Eq -- '"(code|result)"[[:space:]]*:[[:space:]]*-?1001'; then
     match="payload"
   elif [ -n "${err_file}" ] && [ -f "${err_file}" ] && grep -qi -- 'ACCOUNT_NOT_REGISTERED' "${err_file}"; then
     match="stderr"
