@@ -19,6 +19,7 @@ import (
 var Version = "dev"
 
 var cfgFile string
+var regionFlag string
 
 var rootCmd = &cobra.Command{
 	Use:   "vico-cli",
