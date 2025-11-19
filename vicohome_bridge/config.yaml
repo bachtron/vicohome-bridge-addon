@@ -24,6 +24,12 @@ options:
   region: "us"
   api_base: ""
   bootstrap_history: true
+  webrtc_enabled: false
+  webrtc_mode: "on_demand"
+  webrtc_poll_interval: 120
+  go2rtc_enabled: false
+  go2rtc_url: "http://go2rtc:1984/api/stream"
+  go2rtc_stream_prefix: "vicohome_"
 
 schema:
   email: str
@@ -34,3 +40,9 @@ schema:
   region: str?
   api_base: str?
   bootstrap_history: bool?
+  webrtc_enabled: bool?
+  webrtc_mode: list(off|poll|on_demand)?
+  webrtc_poll_interval: int?
+  go2rtc_enabled: bool?
+  go2rtc_url: str?
+  go2rtc_stream_prefix: str?
