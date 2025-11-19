@@ -1,5 +1,27 @@
 # Vicohome Bridge Add-on Changelog
 
+## 1.5.11
+- Fixed another startup regression where `poll_device_health` could bubble up
+  non-zero exit codes (for example when Vicohome temporarily returned no device
+  data), tripping the supervisor's restart loop before the main event poll even
+  began.
+- Ensured the telemetry helper always reports success after handling sparse
+  payloads so the add-on keeps running even when a camera disappears
+  momentarily.
+
+## 1.5.10
+- Fixed a startup regression introduced while stripping the WebRTC helpers by
+  hardening the `vico-cli` invocation wrappers so transient API failures no
+  longer abort the add-on during the first telemetry poll.
+- Removed the leftover camera metadata cache hooks that only existed for the
+  experimental streaming workflow.
+
+## 1.5.9
+- Removed the experimental peer-to-peer streaming hooks (MQTT commands,
+  ticket mirroring, and HTTP bridge helpers) so the add-on focuses entirely on
+  the stable cloud telemetry + event bridge with multi-region support. No
+  configuration changes are required other than removing the unused options.
+
 ## 1.5.8
 - Removed the experimental direct-stream export plumbing and its HTTP mirror from
   the add-on scripts/configuration so the focus returns to the core MQTT
