@@ -54,7 +54,8 @@ esac
 if [ -z "${WEBRTC_POLL_INTERVAL}" ] || [ "${WEBRTC_POLL_INTERVAL}" = "null" ]; then
   WEBRTC_POLL_INTERVAL=120
 fi
-if ! echo "${WEBRTC_POLL_INTERVAL}" | grep -Eq '^[0-9]+$'; then
+if ! [[ "${WEBRTC_POLL_INTERVAL}" =~ ^[0-9]+$ ]]; then
+  bashio::log.warning "Invalid webrtc_poll_interval (${WEBRTC_POLL_INTERVAL}), defaulting to 120 seconds."
   WEBRTC_POLL_INTERVAL=120
 fi
 if [ "${WEBRTC_POLL_INTERVAL}" -le 0 ]; then
@@ -305,7 +306,7 @@ send_ticket_to_go2rtc() {
   local http_code
   http_code=$(curl -s -o /tmp/go2rtc_post.log -w "%{http_code}" -X POST -H "Content-Type: application/json" -d "${request_body}" "${GO2RTC_URL}" || echo "000")
 
-  if echo "${http_code}" | grep -Eq '^2'; then
+  if [[ "${http_code}" =~ ^2 ]]; then
     bashio::log.info "WEBRTC: Sent ticket for ${safe_id} to go2rtc stream ${stream_name} (HTTP ${http_code})."
     return 0
   fi
@@ -1074,7 +1075,7 @@ while true; do
     continue
   fi
 
-  if [ ${EXIT_CODE} -eq 0 ] && echo "${JSON_OUTPUT}" | grep -q "No events found"; then
+  if [ ${EXIT_CODE} -eq 0 ] && [[ "${JSON_OUTPUT}" == *"No events found"* ]]; then
     bashio::log.info "vico-cli reported no events in the recent window."
     run_bootstrap_history
     sleep "${POLL_INTERVAL}"
