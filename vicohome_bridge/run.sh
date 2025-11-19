@@ -288,10 +288,16 @@ run_bootstrap_history() {
 
   bashio::log.info "Running one-time bootstrap history pull from vico-cli..."
 
-  BOOTSTRAP_JSON=$(/usr/local/bin/vico-cli --region "${REGION}" events list \
+  local bootstrap_exit=0
+  local bootstrap_output=""
+  if ! bootstrap_output=$(/usr/local/bin/vico-cli --region "${REGION}" events list \
     --format json \
-    --since 120h 2>/tmp/vico_bootstrap_error.log)
-  EXIT_CODE=$?
+    --since 120h 2>/tmp/vico_bootstrap_error.log); then
+    bootstrap_exit=$?
+    bootstrap_output=""
+  fi
+  BOOTSTRAP_JSON="${bootstrap_output}"
+  EXIT_CODE=${bootstrap_exit}
 
   maybe_warn_region_mismatch "bootstrap events list" "${BOOTSTRAP_JSON}" /tmp/vico_bootstrap_error.log
 
@@ -420,9 +426,12 @@ publish_device_health() {
 poll_device_health() {
   bashio::log.info "Polling vico-cli for device info..."
 
-  local devices_output
-  devices_output=$(/usr/local/bin/vico-cli --region "${REGION}" devices list --format json 2>/tmp/vico_devices_error.log)
-  local exit_code=$?
+  local devices_output=""
+  local exit_code=0
+  if ! devices_output=$(/usr/local/bin/vico-cli --region "${REGION}" devices list --format json 2>/tmp/vico_devices_error.log); then
+    exit_code=$?
+    devices_output=""
+  fi
 
   maybe_warn_region_mismatch "devices list" "${devices_output}" "/tmp/vico_devices_error.log"
 
@@ -449,11 +458,7 @@ poll_device_health() {
 
   if ! echo "${devices_output}" | jq -c '.[]' | while read -r device; do
     publish_device_health "${device}"
-  done; then
-    bashio::log.warning "Failed to iterate device list JSON payload; will retry next cycle."
-  fi
-
-  return 0
+  done
 }
 
 # ==========================
@@ -478,8 +483,14 @@ while true; do
   poll_device_health
   bashio::log.info "Polling vico-cli for events..."
 
-  JSON_OUTPUT=$(/usr/local/bin/vico-cli --region "${REGION}" events list --format json 2>/tmp/vico_error.log)
-  EXIT_CODE=$?
+  events_exit=0
+  events_output=""
+  if ! events_output=$(/usr/local/bin/vico-cli --region "${REGION}" events list --format json 2>/tmp/vico_error.log); then
+    events_exit=$?
+    events_output=""
+  fi
+  JSON_OUTPUT="${events_output}"
+  EXIT_CODE=${events_exit}
 
   maybe_warn_region_mismatch "events list" "${JSON_OUTPUT}" "/tmp/vico_error.log"
 

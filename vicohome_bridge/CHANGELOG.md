@@ -1,5 +1,12 @@
 # Vicohome Bridge Add-on Changelog
 
+## 1.5.10
+- Fixed a startup regression introduced while stripping the WebRTC helpers by
+  hardening the `vico-cli` invocation wrappers so transient API failures no
+  longer abort the add-on during the first telemetry poll.
+- Removed the leftover camera metadata cache hooks that only existed for the
+  experimental streaming workflow.
+
 ## 1.5.9
 - Removed the experimental peer-to-peer streaming hooks (MQTT commands,
   ticket mirroring, and HTTP bridge helpers) so the add-on focuses entirely on
