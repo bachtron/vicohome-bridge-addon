@@ -80,10 +80,11 @@ func init() {
 // an Event object and any error encountered.
 // This function handles the API request, response parsing, and error handling.
 func getEvent(token string, traceID string) (Event, error) {
+	countryCode := auth.GetCountryCode()
 	req := EventRequest{
 		TraceID:   traceID,
 		Language:  "en",
-		CountryNo: "US",
+		CountryNo: countryCode,
 	}
 
 	reqBody, err := json.Marshal(req)
@@ -91,7 +92,8 @@ func getEvent(token string, traceID string) (Event, error) {
 		return Event{}, fmt.Errorf("error marshaling request: %w", err)
 	}
 
-	httpReq, err := http.NewRequest("POST", "https://api-us.vicohome.io/library/newselectsinglelibrary", bytes.NewBuffer(reqBody))
+	baseURL := auth.GetAPIBaseURL()
+	httpReq, err := http.NewRequest("POST", baseURL+"/library/newselectsinglelibrary", bytes.NewBuffer(reqBody))
 	if err != nil {
 		return Event{}, fmt.Errorf("error creating request: %w", err)
 	}
