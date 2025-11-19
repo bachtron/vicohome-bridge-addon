@@ -22,7 +22,7 @@ echo -e "${BLUE}Installing vico-cli CLI...${NC}"
 
 # Version handling
 if [ -z "$1" ]; then
-  VERSION=$(curl -s https://api.github.com/repos/${REPO_OWNER}/${REPO_NAME}/releases/latest | grep -m 1 '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/')
+  VERSION=$(curl -s https://api.github.com/repos/${REPO_OWNER}/${REPO_NAME}/releases/latest | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/')
   echo -e "Installing latest version: ${GREEN}${VERSION}${NC}"
 else
   VERSION=$1
