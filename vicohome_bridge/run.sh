@@ -31,9 +31,8 @@ COMMAND_LISTENER_PID=""
 [ -z "${LOG_LEVEL}" ] && LOG_LEVEL="info"
 [ -z "${BASE_TOPIC}" ] && BASE_TOPIC="vicohome"
 if [ -z "${REGION}" ] || [ "${REGION}" = "null" ]; then
-  REGION="auto"
+  REGION="us"
 fi
-REGION=$(echo "${REGION}" | tr '[:upper:]' '[:lower:]')
 if [ -z "${API_BASE}" ] || [ "${API_BASE}" = "null" ]; then
   API_BASE=""
 fi
@@ -105,42 +104,7 @@ API_BASE_LOG="${API_BASE}"
 if [ -z "${API_BASE_LOG}" ]; then
   API_BASE_LOG="<none>"
 fi
-resolve_api_base() {
-  local override="$1"
-  local region_value="$2"
-
-  if [ -n "${override}" ]; then
-    echo "${override%/}"
-    return
-  fi
-
-  local region_lower
-  region_lower=$(echo "${region_value}" | tr '[:upper:]' '[:lower:]')
-
-  case "${region_lower}" in
-    eu|europe)
-      echo "https://api-eu.vicoo.tech"
-      return
-      ;;
-    us|default|na|na1|""|auto)
-      echo "https://api-us.vicohome.io"
-      return
-      ;;
-    http://*|https://*)
-      echo "${region_value%/}"
-      return
-      ;;
-    *)
-      echo "https://api-us.vicohome.io"
-      return
-      ;;
-  esac
-}
-
-RESOLVED_API_BASE=$(resolve_api_base "${API_BASE}" "${REGION}")
-
 bashio::log.info "Vicohome region = ${REGION}, api_base override = ${API_BASE_LOG}"
-bashio::log.info "Resolved Vicohome API host = ${RESOLVED_API_BASE}"
 
 if [ "${WEBRTC_ACTIVE}" = "true" ]; then
   bashio::log.info "WEBRTC: Enabled (mode=${WEBRTC_MODE}, poll_interval=${WEBRTC_POLL_INTERVAL}s)"
@@ -363,10 +327,8 @@ fetch_webrtc_ticket_for_camera() {
   fi
 
   local command_output
-  command_output=$(/usr/local/bin/vico-cli --region "${REGION}" webrtc ticket --serial "${camera_id}" --format json 2>/tmp/vico_webrtc_error.log)
+  command_output=$(/usr/local/bin/vico-cli webrtc ticket --serial "${camera_id}" --format json 2>/tmp/vico_webrtc_error.log)
   local exit_code=$?
-
-  maybe_warn_region_mismatch "vico-cli webrtc ticket" "${command_output}" /tmp/vico_webrtc_error.log
 
   if [ ${exit_code} -ne 0 ] || [ -z "${command_output}" ] || [ "${command_output}" = "null" ]; then
     local err_preview

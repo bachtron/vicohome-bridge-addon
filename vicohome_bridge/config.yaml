@@ -21,7 +21,7 @@ options:
   poll_interval: 60
   log_level: "info"
   base_topic: "vicohome"
-  region: "auto"
+  region: "us"
   api_base: ""
   bootstrap_history: true
   webrtc_enabled: false
@@ -37,7 +37,7 @@ schema:
   poll_interval: int?
   log_level: list(debug|info|warning|error)?
   base_topic: str?
-  region: list(auto|us|eu)?
+  region: str?
   api_base: str?
   bootstrap_history: bool?
   webrtc_enabled: bool?

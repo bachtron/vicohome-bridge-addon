@@ -52,7 +52,7 @@ func GetAPIBaseURL() string {
 	switch region {
 	case "eu", "europe":
 		return "https://api-eu.vicoo.tech"
-	case "us", "", "default", "na", "na1", "auto":
+	case "us", "", "default", "na", "na1":
 		return "https://api-us.vicohome.io"
 	default:
 		if strings.HasPrefix(region, "http://") || strings.HasPrefix(region, "https://") {
@@ -71,17 +71,20 @@ func GetCountryCode() string {
 	region := strings.ToLower(strings.TrimSpace(os.Getenv("VICOHOME_REGION")))
 	base := strings.ToLower(strings.TrimSpace(os.Getenv("VICOHOME_API_BASE")))
 
-	// If no explicit region was provided but the API base URL points at an EU
-	// cluster, treat the account as EU. (Custom hosts can still override via the
-	// region env var.)
-	if region == "" && strings.Contains(base, "api-eu") {
-		region = "eu"
+	// If the API base clearly targets the EU shard, respect that even when the
+	// region environment variable is unset or still sitting at the default US
+	// value from the add-on configuration.
+	if strings.Contains(base, "api-eu") {
+		switch region {
+		case "", "us", "default", "na", "na1":
+			region = "eu"
+		}
 	}
 
 	switch region {
 	case "eu", "europe":
 		return "EU"
-	case "us", "", "default", "na", "na1", "auto":
+	case "us", "", "default", "na", "na1":
 		return "US"
 	default:
 		if strings.HasPrefix(region, "http://") || strings.HasPrefix(region, "https://") {
