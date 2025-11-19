@@ -1,5 +1,9 @@
 # Vicohome Bridge Add-on Changelog
 
+## 1.5.6
+- Updated the Last Event MQTT discovery template to use `value_json.get(...)` lookups so Home Assistant no longer logs template
+  warnings when Vicohome payloads omit `eventType`/`type` fields, while still falling back to `unknown` when no type is present.
+
 ## 1.5.5
 - Ensured every `grep -E` check in `maybe_warn_region_mismatch()` passes `--` before patterns like `-1001`, so BusyBox no longer
   mistakes the pattern for CLI flags and spams "grep: unrecognized option: 1" during event polling.
