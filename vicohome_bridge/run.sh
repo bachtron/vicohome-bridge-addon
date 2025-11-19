@@ -406,6 +406,20 @@ maybe_poll_webrtc_tickets() {
   fi
 }
 
+string_contains() {
+  local haystack="$1"
+  local needle="$2"
+
+  if [ -z "${haystack}" ] || [ -z "${needle}" ]; then
+    return 1
+  fi
+
+  # BusyBox grep does not understand numeric flags like -1, so keep the helper
+  # constrained to the portable -F/-q forms and use -- to guard against needles
+  # that start with '-'.
+  printf '%s' "${haystack}" | grep -F -q -- "${needle}"
+}
+
 start_webrtc_request_listener() {
   if [ "${WEBRTC_ACTIVE}" != "true" ] || [ "${WEBRTC_MODE}" != "on_demand" ]; then
     return
@@ -1075,7 +1089,7 @@ while true; do
     continue
   fi
 
-  if [ ${EXIT_CODE} -eq 0 ] && [[ "${JSON_OUTPUT}" == *"No events found"* ]]; then
+  if [ ${EXIT_CODE} -eq 0 ] && string_contains "${JSON_OUTPUT}" "No events found"; then
     bashio::log.info "vico-cli reported no events in the recent window."
     run_bootstrap_history
     sleep "${POLL_INTERVAL}"
@@ -1085,7 +1099,7 @@ while true; do
   bashio::log.info "vico-cli output (first 200 chars): $(echo "${JSON_OUTPUT}" | head -c 200)"
 
   # Quick sanity check so we don't feed clearly non-JSON into jq
-  first_char=$(printf '%s' "${JSON_OUTPUT}" | sed -n '1s/^\(.\).*$/\1/p')
+  first_char="${JSON_OUTPUT:0:1}"
   if [ "${first_char}" != "[" ] && [ "${first_char}" != "{" ]; then
     bashio::log.info "vico-cli output does not look like JSON (starts with '${first_char}'), skipping parse this cycle."
     sleep "${POLL_INTERVAL}"

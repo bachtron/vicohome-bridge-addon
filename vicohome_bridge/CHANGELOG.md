@@ -1,5 +1,12 @@
 # Vicohome Bridge Add-on Changelog
 
+## 1.5.3
+- Replaced the ad-hoc "No events found" check in `run.sh` with a helper that uses BusyBox-safe `grep -F -q` semantics so event
+  polling never invokes unsupported `grep -1` flags and the add-on stops logging "grep: unrecognized option: 1" after every
+  empty window.
+- Updated the vendored `vico-cli` installer script to request the latest release tag with `grep -m 1`, ensuring BusyBox systems
+  only rely on options that are actually implemented.
+
 ## 1.5.2
 - Make `vico-cli` derive the correct `countryNo` from the configured API base even when the add-on's default `region` value is
   still set to `us`, so EU installations that only override `api_base` also receive telemetry/metadata instead of "unknown"
