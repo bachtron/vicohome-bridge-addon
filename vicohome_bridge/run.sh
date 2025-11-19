@@ -420,6 +420,27 @@ string_contains() {
   printf '%s' "${haystack}" | grep -F -q -- "${needle}"
 }
 
+maybe_warn_region_mismatch() {
+  local context="$1"
+  local payload="$2"
+  local err_file="$3"
+
+  local match=""
+  if printf '%s' "${payload}" | grep -qi 'ACCOUNT_NOT_REGISTERED'; then
+    match="payload"
+  elif printf '%s' "${payload}" | grep -Eq -- '"(code|result)"\s*:\s*-?1001'; then
+    match="payload"
+  elif [ -n "${err_file}" ] && [ -f "${err_file}" ] && grep -qi 'ACCOUNT_NOT_REGISTERED' "${err_file}"; then
+    match="stderr"
+  elif [ -n "${err_file}" ] && [ -f "${err_file}" ] && grep -Eq -- '-1001' "${err_file}"; then
+    match="stderr"
+  fi
+
+  if [ -n "${match}" ]; then
+    bashio::log.warning "Vicohome API hinted at a region mismatch (${context}; detected in ${match}). Double-check your region/api_base settings."
+  fi
+}
+
 start_webrtc_request_listener() {
   if [ "${WEBRTC_ACTIVE}" != "true" ] || [ "${WEBRTC_MODE}" != "on_demand" ]; then
     return
@@ -764,7 +785,7 @@ poll_device_health() {
   devices_output=$(/usr/local/bin/vico-cli --region "${REGION}" devices list --format json 2>/tmp/vico_devices_error.log)
   local exit_code=$?
 
-  maybe_warn_region_mismatch "vico-cli devices list" "${devices_output}" /tmp/vico_devices_error.log
+  maybe_warn_region_mismatch "devices list" "${devices_output}" "/tmp/vico_devices_error.log"
 
   if [ ${exit_code} -ne 0 ]; then
     bashio::log.warning "vico-cli devices list exited with code ${exit_code}."
@@ -1073,7 +1094,7 @@ while true; do
   JSON_OUTPUT=$(/usr/local/bin/vico-cli --region "${REGION}" events list --format json 2>/tmp/vico_error.log)
   EXIT_CODE=$?
 
-  maybe_warn_region_mismatch "vico-cli events list" "${JSON_OUTPUT}" /tmp/vico_error.log
+  maybe_warn_region_mismatch "events list" "${JSON_OUTPUT}" "/tmp/vico_error.log"
 
   if [ ${EXIT_CODE} -ne 0 ]; then
     bashio::log.error "vico-cli exited with code ${EXIT_CODE}."

@@ -1,5 +1,10 @@
 # Vicohome Bridge Add-on Changelog
 
+## 1.5.4
+- Hardened the region-mismatch detector in `run.sh` by making every `grep` invocation BusyBox-compatible (explicit `--` before the
+  `-1001` pattern), eliminating the "grep: unrecognized option: 1" errors that appeared after event polling when Vicohome
+  returned those error codes.
+
 ## 1.5.3
 - Replaced the ad-hoc "No events found" check in `run.sh` with a helper that uses BusyBox-safe `grep -F -q` semantics so event
   polling never invokes unsupported `grep -1` flags and the add-on stops logging "grep: unrecognized option: 1" after every
