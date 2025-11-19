@@ -13,6 +13,8 @@ POLL_INTERVAL=$(bashio::config 'poll_interval')
 LOG_LEVEL=$(bashio::config 'log_level')
 BASE_TOPIC=$(bashio::config 'base_topic')
 BOOTSTRAP_HISTORY=$(bashio::config 'bootstrap_history')
+REGION=$(bashio::config 'region')
+API_BASE_OVERRIDE=$(bashio::config 'api_base_override')
 
 [ -z "${BOOTSTRAP_HISTORY}" ] && BOOTSTRAP_HISTORY="false"
 HAS_BOOTSTRAPPED="false"
@@ -21,6 +23,10 @@ HAS_BOOTSTRAPPED="false"
 [ -z "${POLL_INTERVAL}" ] && POLL_INTERVAL=60
 [ -z "${LOG_LEVEL}" ] && LOG_LEVEL="info"
 [ -z "${BASE_TOPIC}" ] && BASE_TOPIC="vicohome"
+if [ "${REGION}" = "null" ]; then
+  REGION=""
+fi
+[ -z "${REGION}" ] && REGION="auto"
 AVAILABILITY_TOPIC="${BASE_TOPIC}/bridge/status"
 # How often (in seconds) to refresh MQTT discovery payloads so deleted entities get recreated.
 DISCOVERY_REFRESH_SECONDS=300
@@ -29,6 +35,12 @@ bashio::log.info "Vicohome Bridge configuration:"
 bashio::log.info "  poll_interval = ${POLL_INTERVAL}s"
 bashio::log.info "  base_topic    = ${BASE_TOPIC}"
 bashio::log.info "  log_level     = ${LOG_LEVEL}"
+bashio::log.info "  region        = ${REGION}"
+if [ -n "${API_BASE_OVERRIDE}" ] && [ "${API_BASE_OVERRIDE}" != "null" ]; then
+  bashio::log.info "  api_base_override = ${API_BASE_OVERRIDE}"
+else
+  API_BASE_OVERRIDE=""
+fi
 
 bashio::log.level "${LOG_LEVEL}"
 
@@ -72,6 +84,10 @@ publish_availability online
 export VICOHOME_EMAIL="${EMAIL}"
 export VICOHOME_PASSWORD="${PASSWORD}"
 export VICOHOME_DEBUG="1"
+export VICOHOME_REGION="${REGION}"
+if [ -n "${API_BASE_OVERRIDE}" ]; then
+  export VICOHOME_API_BASE="${API_BASE_OVERRIDE}"
+fi
 
 mkdir -p /data
 

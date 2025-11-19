@@ -99,7 +99,7 @@ func init() {
 func listDevices(token string) ([]Device, error) {
 	req := DeviceListRequest{
 		Language:  "en",
-		CountryNo: "US",
+		CountryNo: auth.GetCountryCode(),
 	}
 
 	reqBody, err := json.Marshal(req)
@@ -107,7 +107,8 @@ func listDevices(token string) ([]Device, error) {
 		return nil, fmt.Errorf("error marshaling request: %w", err)
 	}
 
-	httpReq, err := http.NewRequest("POST", "https://api-us.vicohome.io/device/listuserdevices", bytes.NewBuffer(reqBody))
+	apiURL := auth.BuildAPIURL("/device/listuserdevices")
+	httpReq, err := http.NewRequest("POST", apiURL, bytes.NewBuffer(reqBody))
 	if err != nil {
 		return nil, fmt.Errorf("error creating request: %w", err)
 	}

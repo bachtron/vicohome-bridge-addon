@@ -62,7 +62,7 @@ Times should be in format: 2025-05-18 14:59:25`,
 			StartTimestamp: startTimestamp,
 			EndTimestamp:   endTimestamp,
 			Language:       "en",
-			CountryNo:      "US",
+			CountryNo:      auth.GetCountryCode(),
 		}
 
 		allEvents, err := fetchEvents(token, eventsReq)

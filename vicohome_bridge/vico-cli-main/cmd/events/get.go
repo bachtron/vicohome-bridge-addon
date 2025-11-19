@@ -83,7 +83,7 @@ func getEvent(token string, traceID string) (Event, error) {
 	req := EventRequest{
 		TraceID:   traceID,
 		Language:  "en",
-		CountryNo: "US",
+		CountryNo: auth.GetCountryCode(),
 	}
 
 	reqBody, err := json.Marshal(req)
@@ -91,7 +91,8 @@ func getEvent(token string, traceID string) (Event, error) {
 		return Event{}, fmt.Errorf("error marshaling request: %w", err)
 	}
 
-	httpReq, err := http.NewRequest("POST", "https://api-us.vicohome.io/library/newselectsinglelibrary", bytes.NewBuffer(reqBody))
+	apiURL := auth.BuildAPIURL("/library/newselectsinglelibrary")
+	httpReq, err := http.NewRequest("POST", apiURL, bytes.NewBuffer(reqBody))
 	if err != nil {
 		return Event{}, fmt.Errorf("error creating request: %w", err)
 	}

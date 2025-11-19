@@ -18,6 +18,7 @@ It:
 - Republishes discovery every few minutes so deleted entities get recreated automatically
 - Performs a one-time history bootstrap when Vicohome reports no recent motion so Last Event sensors populate even before new motion (configurable)
 - Provides a simple **dashboard** with last-event thumbnails and camera health
+- Works with Vicohome's **US and EU** API regions (auto-selects US by default, configurable)
 
 Tested on:
 
@@ -108,6 +109,8 @@ You should now see **“Vicohome Bridge”** in the add-on list.
    - `base_topic` – MQTT base topic (default: `vicohome`)
    - `log_level` – `debug`, `info`, `warning`, `error` (default: `info`). Use `debug` when you need extra telemetry/event payload details in the add-on logs.
    - `bootstrap_history` – set to `false` to skip the one-time history pull when Vicohome returns "No events found" (default: `true`).
+   - `region` – `auto`, `us`, or `eu`. `auto` sticks with the US API unless you override it.
+   - `api_base_override` – optional full URL (e.g. `https://api-eu.vicoo.tech`) if Vicohome introduces a new region hostname.
 
    Example:
 
@@ -118,7 +121,9 @@ You should now see **“Vicohome Bridge”** in the add-on list.
      "poll_interval": 60,
      "base_topic": "vicohome",
      "log_level": "info",
-     "bootstrap_history": true
+     "bootstrap_history": true,
+     "region": "auto",
+     "api_base_override": ""
    }
    ```
 
@@ -164,6 +169,15 @@ These extra details make it easier to see what the Vicohome cloud is returning a
 #### Historical bootstrap for Last Event sensors
 
 When `vico-cli` reports `No events found in the specified time period.`, the add-on performs a **one-time history pull** (last ~5 days) and replays those events to MQTT just like live motion. This ensures your Last Event sensors and automations have recent context even before fresh motion occurs. Disable `bootstrap_history` if you prefer to wait for brand new events instead of replaying history.
+
+#### Regional endpoints
+
+The Vicohome cloud operates separate stacks for North America and Europe. By default the add-on sticks with the US endpoint, but you can:
+
+- Set `region` to `eu` to force the EU API host.
+- Leave `region` on `auto` and supply `api_base_override` if Vicohome adds a new hostname.
+
+Both options are passed into `vico-cli`, so every command (devices, events, history bootstrap) consistently hits the same geography.
 
 ---
 

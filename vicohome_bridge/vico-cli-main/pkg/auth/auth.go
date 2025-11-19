@@ -17,6 +17,73 @@ import (
 	"github.com/dydx/vico-cli/pkg/cache"
 )
 
+const (
+	defaultUSAPIBase = "https://api-us.vicohome.io"
+	defaultEUAPIBase = "https://api-eu.vicoo.tech"
+)
+
+// sanitizeAPIBase trims whitespace and trailing slashes from an API base URL so
+// we can safely append endpoint paths without producing duplicated separators.
+func sanitizeAPIBase(base string) string {
+	base = strings.TrimSpace(base)
+	return strings.TrimRight(base, "/")
+}
+
+// BuildAPIURL returns the fully qualified Vicohome API URL for the provided
+// endpoint path, honoring the configured region or override environment
+// variables.
+func BuildAPIURL(endpoint string) string {
+	base := GetAPIBaseURL()
+	if strings.HasPrefix(endpoint, "/") {
+		return fmt.Sprintf("%s%s", base, endpoint)
+	}
+	return fmt.Sprintf("%s/%s", base, endpoint)
+}
+
+// GetAPIBaseURL returns the Vicohome API base derived from environment
+// variables. Priority:
+//  1. VICOHOME_API_BASE override (trimmed, trailing slashes removed)
+//  2. Region (VICOHOME_REGION) selection with defaults for US/EU
+//  3. US API base as the global fallback
+func GetAPIBaseURL() string {
+	override := sanitizeAPIBase(os.Getenv("VICOHOME_API_BASE"))
+	if override != "" {
+		return override
+	}
+	region := strings.ToLower(strings.TrimSpace(os.Getenv("VICOHOME_REGION")))
+	switch region {
+	case "eu":
+		return defaultEUAPIBase
+	case "us", "auto", "":
+		return defaultUSAPIBase
+	default:
+		return defaultUSAPIBase
+	}
+}
+
+// GetCountryCode returns the ISO-style country code used by the Vicohome API
+// request payloads. When the user explicitly sets the region we return the
+// matching country; otherwise we attempt to infer it from the effective API
+// base URL so overrides continue to work.
+func GetCountryCode() string {
+	region := strings.ToLower(strings.TrimSpace(os.Getenv("VICOHOME_REGION")))
+	switch region {
+	case "eu":
+		return "EU"
+	case "us":
+		return "US"
+	case "auto", "":
+		break
+	default:
+		break
+	}
+	base := strings.ToLower(GetAPIBaseURL())
+	if strings.Contains(base, "-eu") || strings.Contains(base, "vicoo.tech") {
+		return "EU"
+	}
+	return "US"
+}
+
 // Error codes from the API
 const (
 	ErrorAccountKicked = -1024 // Account has been kicked offline
@@ -128,7 +195,8 @@ func authenticateDirectly() (string, error) {
 		return "", fmt.Errorf("error marshaling login request: %w", err)
 	}
 
-	req, err := http.NewRequest("POST", "https://api-us.vicohome.io/account/login", bytes.NewBuffer(reqBody))
+	loginURL := BuildAPIURL("/account/login")
+	req, err := http.NewRequest("POST", loginURL, bytes.NewBuffer(reqBody))
 	if err != nil {
 		return "", fmt.Errorf("error creating request: %w", err)
 	}

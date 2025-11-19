@@ -82,7 +82,7 @@ func getDevice(token string, serialNumber string) (Device, error) {
 	req := DeviceRequest{
 		SerialNumber: serialNumber,
 		Language:     "en",
-		CountryNo:    "US",
+		CountryNo:    auth.GetCountryCode(),
 	}
 
 	reqBody, err := json.Marshal(req)
@@ -90,7 +90,8 @@ func getDevice(token string, serialNumber string) (Device, error) {
 		return Device{}, fmt.Errorf("error marshaling request: %w", err)
 	}
 
-	httpReq, err := http.NewRequest("POST", "https://api-us.vicohome.io/device/selectsingledevice", bytes.NewBuffer(reqBody))
+	apiURL := auth.BuildAPIURL("/device/selectsingledevice")
+	httpReq, err := http.NewRequest("POST", apiURL, bytes.NewBuffer(reqBody))
 	if err != nil {
 		return Device{}, fmt.Errorf("error creating request: %w", err)
 	}
