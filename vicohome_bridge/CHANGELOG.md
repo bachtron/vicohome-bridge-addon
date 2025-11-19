@@ -1,5 +1,11 @@
 # Vicohome Bridge Add-on Changelog
 
+## 1.5.9
+- Removed the experimental peer-to-peer streaming hooks (MQTT commands,
+  ticket mirroring, and HTTP bridge helpers) so the add-on focuses entirely on
+  the stable cloud telemetry + event bridge with multi-region support. No
+  configuration changes are required other than removing the unused options.
+
 ## 1.5.8
 - Removed the experimental direct-stream export plumbing and its HTTP mirror from
   the add-on scripts/configuration so the focus returns to the core MQTT
