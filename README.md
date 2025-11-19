@@ -107,6 +107,7 @@ You should now see **“Vicohome Bridge”** in the add-on list.
    - `poll_interval` – how often to poll for events (seconds)
    - `base_topic` – MQTT base topic (default: `vicohome`)
    - `log_level` – `debug`, `info`, `warning`, `error` (default: `info`). Use `debug` when you need extra telemetry/event payload details in the add-on logs.
+   - `region` / `api_base` – optional Vicohome shard overrides. Leave the defaults (`us` / empty) unless you know you need the EU shard or a custom API hostname.
    - `bootstrap_history` – set to `false` to skip the one-time history pull when Vicohome returns "No events found" (default: `true`).
 
    Example:
@@ -127,6 +128,22 @@ You should now see **“Vicohome Bridge”** in the add-on list.
    - **Start on boot**
    - **Watchdog**
 6. Click **Start**.
+
+---
+
+### 2b. Rebuild after pulling new commits
+
+If you're running this repository from a local checkout (instead of the published
+Supervisor store version), you need to **rebuild** the add-on every time you
+pull new commits:
+
+1. Go to **Settings → Add-ons → Vicohome Bridge**.
+2. Click **Rebuild** (or **Install** again) so Home Assistant repackages the
+   updated `run.sh`, vendored `vico-cli`, and configuration defaults.
+3. Start the add-on once the rebuild finishes.
+
+This ensures fixes like the BusyBox `grep` compatibility patches and region
+updates actually make it into your running container.
 
 ---
 
@@ -222,6 +239,23 @@ The **Last Event** sensor exposes attributes such as:
 - and other fields from the Vicohome API.
 
 All of this data ultimately comes from `vico-cli` – this add-on just forwards and reshapes it.
+
+---
+
+## Notes & limitations
+
+- The add-on currently focuses on Vicohome's **cloud event feed**. Motion snapshots,
+  clip URLs, telemetry, and MQTT discovery all come from the Vicohome APIs polled
+  by `vico-cli`.
+- The previous experimental **P2P/WebRTC ticket export** (and the optional
+  go2rtc HTTP mirror) have been removed for now because they required a fragile
+  amount of camera wake-ups and duplicated code inside the add-on. You still get
+  the full multi-region support and MQTT entity set described above, and if a
+  future version stabilizes the WebRTC workflow it may return behind a cleaner
+  interface.
+- If you are outside the US shard, set the `region` option to `eu` (or provide
+  a full `api_base`) so authentication, telemetry, and event polling go to the
+  right Vicohome backend.
 
 ---
 

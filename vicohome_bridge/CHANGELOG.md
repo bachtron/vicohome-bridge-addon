@@ -1,5 +1,66 @@
 # Vicohome Bridge Add-on Changelog
 
+## 1.5.8
+- Removed the experimental WebRTC / go2rtc ticket export plumbing from the add-on
+  scripts and configuration so the focus returns to the core MQTT discovery,
+  telemetry, and multi-region event polling features.
+- Updated the README to reflect the current installation/operation flow and to
+  call out that P2P/WebRTC support has been pulled back for now.
+
+## 1.5.7
+- Hardened the region mismatch detector by using POSIX character classes in the
+  BusyBox-compatible `grep` checks, ensuring the add-on can safely detect `-1001`
+  errors without tripping over unsupported numeric options.
+- Documented the rebuild process in the README so users running from a git
+  checkout know they must reinstall/rebuild the add-on after pulling new
+  commits to pick up fixes like the `grep` compatibility patches.
+
+## 1.5.6
+- Updated the Last Event MQTT discovery template to use `value_json.get(...)` lookups so Home Assistant no longer logs template
+  warnings when Vicohome payloads omit `eventType`/`type` fields, while still falling back to `unknown` when no type is present.
+
+## 1.5.5
+- Ensured every `grep -E` check in `maybe_warn_region_mismatch()` passes `--` before patterns like `-1001`, so BusyBox no longer
+  mistakes the pattern for CLI flags and spams "grep: unrecognized option: 1" during event polling.
+
+## 1.5.4
+- Hardened the region-mismatch detector in `run.sh` by making every `grep` invocation BusyBox-compatible (explicit `--` before the
+  `-1001` pattern), eliminating the "grep: unrecognized option: 1" errors that appeared after event polling when Vicohome
+  returned those error codes.
+
+## 1.5.3
+- Replaced the ad-hoc "No events found" check in `run.sh` with a helper that uses BusyBox-safe `grep -F -q` semantics so event
+  polling never invokes unsupported `grep -1` flags and the add-on stops logging "grep: unrecognized option: 1" after every
+  empty window.
+- Updated the vendored `vico-cli` installer script to request the latest release tag with `grep -m 1`, ensuring BusyBox systems
+  only rely on options that are actually implemented.
+
+## 1.5.2
+- Make `vico-cli` derive the correct `countryNo` from the configured API base even when the add-on's default `region` value is
+  still set to `us`, so EU installations that only override `api_base` also receive telemetry/metadata instead of "unknown"
+  devices.
+
+## 1.5.1
+- Fixed the `vico-cli devices` and event helpers to send a region-aware `countryNo`, so EU deployments now receive the same
+  camera metadata/telemetry as US users instead of "unknown" devices.
+
+## 1.5.0
+- Added an optional go2rtc bridge: every WebRTC ticket can now be mirrored to `http://go2rtc:1984/api/stream` using the `vicohome_<safe_id>` naming convention, making it easier for the go2rtc add-on to ingest Vicohome tickets without its own MQTT subscriber.
+- Introduced the `go2rtc_enabled`, `go2rtc_url`, and `go2rtc_stream_prefix` configuration options (disabled by default) so users can turn on the HTTP bridge only when a go2rtc instance is available.
+- Documented the HTTP payload structure and workflow in the README alongside the existing MQTT-based instructions.
+
+## 1.4.0
+- Added experimental WebRTC / P2P ticket export so power users can request Vicohome tickets over MQTT and hand them to go2rtc (or other tooling) without modifying the add-on image.
+- Introduced `webrtc_enabled`, `webrtc_mode`, and `webrtc_poll_interval` configuration options plus matching MQTT request/ticket/status topics while keeping the feature opt-in by default.
+- Documented the go2rtc tie-in pattern and WebRTC topic schema in the README so integrators have a consistent naming convention (`vicohome_<safe_id>` streams).
+
+## 1.3.0
+- Added regional awareness to `vico-cli` so the bridge can authenticate and poll either the US or EU Vicohome shards (or any
+  fully-qualified custom API host) based on the new configuration options.
+- Introduced `region` / `api_base` add-on options and exported them as `VICOHOME_REGION` / `VICOHOME_API_BASE` environment
+  variables so the integration defaults to the US cloud but can be pointed at EU or white-label deployments without custom
+  images.
+
 ## 1.2.2
 - Extended the bootstrap history pull to cover the last 5 days of Vicohome activity so Last Event sensors populate even when your account has been idle for more than a day.
 
