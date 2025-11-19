@@ -24,6 +24,7 @@ GO2RTC_STREAM_PREFIX=$(bashio::config 'go2rtc_stream_prefix')
 
 [ -z "${BOOTSTRAP_HISTORY}" ] && BOOTSTRAP_HISTORY="false"
 HAS_BOOTSTRAPPED="false"
+COMMAND_LISTENER_PID=""
 
 # Defaults
 [ -z "${POLL_INTERVAL}" ] && POLL_INTERVAL=60
@@ -629,10 +630,12 @@ run_bootstrap_history() {
 
   bashio::log.info "Running one-time bootstrap history pull from vico-cli..."
 
-  BOOTSTRAP_JSON=$(/usr/local/bin/vico-cli events list \
+  BOOTSTRAP_JSON=$(/usr/local/bin/vico-cli --region "${REGION}" events list \
     --format json \
     --since 120h 2>/tmp/vico_bootstrap_error.log)
   EXIT_CODE=$?
+
+  maybe_warn_region_mismatch "bootstrap events list" "${BOOTSTRAP_JSON}" /tmp/vico_bootstrap_error.log
 
   if [ ${EXIT_CODE} -ne 0 ] || [ -z "${BOOTSTRAP_JSON}" ] || [ "${BOOTSTRAP_JSON}" = "null" ]; then
     bashio::log.warning "Bootstrap history pull failed (exit ${EXIT_CODE}). stderr: $(head -c 200 /tmp/vico_bootstrap_error.log 2>/dev/null)"
@@ -650,6 +653,7 @@ run_bootstrap_history() {
       EVENT_TYPE=$(echo "${event}" | jq -r '.eventType // .type // .event_type // empty')
 
       ensure_discovery_published "${CAMERA_ID}" "${CAMERA_NAME}"
+      cache_camera_metadata "${CAMERA_ID}" "${SAFE_ID}" "${CAMERA_NAME}"
       publish_event_for_camera "${SAFE_ID}" "${event}"
 
       if [ "${EVENT_TYPE}" = "motion" ] || [ "${EVENT_TYPE}" = "person" ] || [ "${EVENT_TYPE}" = "human" ] || [ "${EVENT_TYPE}" = "bird" ]; then
@@ -725,6 +729,7 @@ publish_device_health() {
   safe_id=$(sanitize_id "${camera_id}")
 
   ensure_discovery_published "${camera_id}" "${camera_name}"
+  cache_camera_metadata "${camera_id}" "${safe_id}" "${display_name}"
 
   local timestamp
   timestamp=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
@@ -752,11 +757,32 @@ publish_device_health() {
     -q 0 || bashio::log.warning "Failed to publish telemetry for ${telemetry_topic}"
 }
 
+maybe_warn_region_mismatch() {
+  local context="$1"
+  local payload="$2"
+  local err_file="$3"
+
+  local match=""
+  if printf '%s' "${payload}" | grep -qi 'ACCOUNT_NOT_REGISTERED'; then
+    match="payload"
+  elif printf '%s' "${payload}" | grep -Eq '"(code|result)"\s*:\s*-?1001'; then
+    match="payload"
+  elif [ -n "${err_file}" ] && [ -f "${err_file}" ] && grep -qi 'ACCOUNT_NOT_REGISTERED' "${err_file}"; then
+    match="stderr"
+  elif [ -n "${err_file}" ] && [ -f "${err_file}" ] && grep -Eq '-1001' "${err_file}"; then
+    match="stderr"
+  fi
+
+  if [ -n "${match}" ]; then
+    bashio::log.warning "Vicohome API returned ACCOUNT_NOT_REGISTERED (-1001) while running ${context}. Verify your bridge account credentials and ensure the add-on's region option matches your Vicohome shard (e.g. set region=eu for EU accounts). Current region=${REGION}, API host=${RESOLVED_API_BASE}."
+  fi
+}
+
 poll_device_health() {
   bashio::log.info "Polling vico-cli for device info..."
 
   local devices_output
-  devices_output=$(/usr/local/bin/vico-cli devices list --format json 2>/tmp/vico_devices_error.log)
+  devices_output=$(/usr/local/bin/vico-cli --region "${REGION}" devices list --format json 2>/tmp/vico_devices_error.log)
   local exit_code=$?
 
   maybe_warn_region_mismatch "devices list" "${devices_output}" "/tmp/vico_devices_error.log"
@@ -787,6 +813,260 @@ poll_device_health() {
   done
 }
 
+publish_p2p_status() {
+  local safe_id="$1"
+  local state="$2"
+  local message="$3"
+  local timestamp
+  timestamp=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+
+  local payload
+  if ! payload=$(jq -nc --arg state "${state}" --arg message "${message}" --arg timestamp "${timestamp}" '{state:$state,message:$message,timestamp:$timestamp}' 2>/dev/null); then
+    payload="{\"state\":\"${state}\",\"message\":\"${message}\",\"timestamp\":\"${timestamp}\"}"
+  fi
+
+  mosquitto_pub ${MQTT_ARGS} \
+    -t "${BASE_TOPIC}/${safe_id}/p2p_status" \
+    -m "${payload}" \
+    -q 0 || bashio::log.warning "Failed to publish P2P status for ${safe_id}"
+}
+
+publish_webrtc_ticket() {
+  local safe_id="$1"
+  local ticket_json="$2"
+
+  mosquitto_pub ${MQTT_ARGS} \
+    -t "${BASE_TOPIC}/${safe_id}/webrtc_ticket" \
+    -m "${ticket_json}" \
+    -q 0 || bashio::log.warning "Failed to publish WebRTC ticket payload for ${safe_id}"
+}
+
+determine_stream_from_payload() {
+  local payload="$1"
+  local stream=""
+
+  if [ -n "${payload}" ]; then
+    local parsed
+    parsed=$(echo "${payload}" | jq -r '.stream // .Stream // empty' 2>/dev/null)
+    if [ -n "${parsed}" ] && [ "${parsed}" != "null" ]; then
+      stream="${parsed}"
+    fi
+  fi
+
+  if [ -z "${stream}" ]; then
+    case "${payload}" in
+      main|MAIN|Main)
+        stream="main"
+        ;;
+      sub|SUB|Sub)
+        stream="sub"
+        ;;
+      *)
+        ;;
+    esac
+  fi
+
+  if [ -z "${stream}" ]; then
+    stream="main"
+  fi
+
+  echo "${stream}" | tr '[:lower:]' '[:upper:]'
+}
+
+request_webrtc_ticket() {
+  local camera_id="$1"
+  local stream="$2"
+  local safe_id="$3"
+
+  local ticket_json
+  ticket_json=$(/usr/local/bin/vico-cli p2p session --device "${camera_id}" --stream "${stream}" 2>/tmp/vico_webrtc_error.log)
+  local exit_code=$?
+
+  if [ ${exit_code} -ne 0 ]; then
+    local stderr_preview
+    stderr_preview=$(head -c 200 /tmp/vico_webrtc_error.log 2>/dev/null)
+    bashio::log.warning "vico-cli p2p session failed for ${camera_id} (exit ${exit_code}). stderr: ${stderr_preview}"
+    publish_p2p_status "${safe_id}" "error" "vico-cli p2p session failed (exit ${exit_code})"
+    return 1
+  fi
+
+  if [ -z "${ticket_json}" ] || [ "${ticket_json}" = "null" ]; then
+    bashio::log.warning "vico-cli p2p session returned empty payload for ${camera_id}"
+    publish_p2p_status "${safe_id}" "error" "Empty WebRTC ticket payload"
+    return 1
+  fi
+
+  if ! echo "${ticket_json}" | jq -e '.' >/dev/null 2>&1; then
+    bashio::log.warning "WebRTC ticket payload for ${camera_id} was not JSON. Payload preview: $(echo "${ticket_json}" | tr -d '\n' | head -c 200)"
+    publish_p2p_status "${safe_id}" "error" "Invalid WebRTC ticket payload"
+    return 1
+  fi
+
+  echo "${ticket_json}"
+  return 0
+}
+
+start_webrtc_session() {
+  local safe_id="$1"
+  local payload="$2"
+
+  local stream
+  stream=$(determine_stream_from_payload "${payload}")
+  local camera_id
+  camera_id=$(lookup_camera_id "${safe_id}")
+
+  if [ -z "${camera_id}" ]; then
+    bashio::log.info "No cached device ID for ${safe_id}; refreshing device cache for WebRTC request."
+    poll_device_health
+    camera_id=$(lookup_camera_id "${safe_id}")
+  fi
+
+  if [ -z "${camera_id}" ]; then
+    local error_msg="Cannot start WebRTC session for ${safe_id}: unknown camera mapping."
+    bashio::log.warning "${error_msg}"
+    publish_p2p_status "${safe_id}" "error" "${error_msg}"
+    return
+  fi
+
+  local camera_name
+  camera_name=$(lookup_camera_name "${safe_id}")
+  if [ -z "${camera_name}" ]; then
+    camera_name="Camera ${camera_id}"
+  fi
+
+  publish_p2p_status "${safe_id}" "starting" "Requesting WebRTC ticket for ${camera_name} (${stream})"
+  local ticket_json
+  if ! ticket_json=$(request_webrtc_ticket "${camera_id}" "${stream}" "${safe_id}"); then
+    return
+  fi
+
+  publish_webrtc_ticket "${safe_id}" "${ticket_json}"
+
+  local session_id
+  session_id=$(echo "${ticket_json}" | jq -r '.openResponse.data.connectionId // .openResponse.data.connectId // .openResponse.data.channelId // .openResponse.data.sessionId // empty' 2>/dev/null)
+  remember_p2p_session "${safe_id}" "${camera_id}" "${session_id}"
+  publish_p2p_status "${safe_id}" "ticket" "WebRTC ticket published for ${camera_name} (${stream})"
+}
+
+close_webrtc_session() {
+  local safe_id="$1"
+
+  local session_data
+  session_data=$(read_p2p_session "${safe_id}")
+  local camera_id=""
+  local session_id=""
+
+  if [ -n "${session_data}" ]; then
+    camera_id=${session_data%%|*}
+    session_id=${session_data#${camera_id}|}
+  fi
+
+  if [ -z "${camera_id}" ]; then
+    camera_id=$(lookup_camera_id "${safe_id}")
+  fi
+
+  if [ -z "${camera_id}" ]; then
+    publish_p2p_status "${safe_id}" "error" "Cannot close WebRTC session: unknown camera mapping"
+    return
+  fi
+
+  local camera_name
+  camera_name=$(lookup_camera_name "${safe_id}")
+  if [ -z "${camera_name}" ]; then
+    camera_name="Camera ${camera_id}"
+  fi
+
+  publish_p2p_status "${safe_id}" "closing" "Closing WebRTC session for ${camera_name}"
+
+  local close_output
+  local exit_code
+  if [ -n "${session_id}" ] && [ "${session_id}" != "${camera_id}" ]; then
+    close_output=$(/usr/local/bin/vico-cli p2p close --device "${camera_id}" --session "${session_id}" 2>/tmp/vico_webrtc_close_error.log)
+    exit_code=$?
+  else
+    close_output=$(/usr/local/bin/vico-cli p2p close --device "${camera_id}" 2>/tmp/vico_webrtc_close_error.log)
+    exit_code=$?
+  fi
+
+  if [ ${exit_code} -ne 0 ]; then
+    local stderr_preview
+    stderr_preview=$(head -c 200 /tmp/vico_webrtc_close_error.log 2>/dev/null)
+    bashio::log.warning "vico-cli p2p close failed for ${camera_id} (exit ${exit_code}). stderr: ${stderr_preview}"
+    publish_p2p_status "${safe_id}" "error" "vico-cli p2p close failed (exit ${exit_code})"
+  else
+    bashio::log.debug "WebRTC close response for ${camera_id}: ${close_output}"
+    publish_p2p_status "${safe_id}" "closed" "WebRTC session closed for ${camera_name}"
+  fi
+
+  clear_p2p_session "${safe_id}"
+}
+
+handle_command_message() {
+  local topic="$1"
+  local payload="$2"
+
+  case "${topic}" in
+    "${BASE_TOPIC}/"*)
+      ;;
+    *)
+      return
+      ;;
+  esac
+
+  local remainder="${topic#${BASE_TOPIC}/}"
+  case "${remainder}" in
+    */cmd/*)
+      ;;
+    *)
+      return
+      ;;
+  esac
+
+  local safe_id="${remainder%%/cmd/*}"
+  local command_path="${remainder#${safe_id}/cmd/}"
+
+  if [ -z "${safe_id}" ] || [ -z "${command_path}" ]; then
+    return
+  fi
+
+  case "${command_path}" in
+    live_on)
+      start_webrtc_session "${safe_id}" "${payload}"
+      ;;
+    live_off)
+      close_webrtc_session "${safe_id}"
+      ;;
+    *)
+      bashio::log.debug "Ignoring unknown MQTT command path '${command_path}' for ${safe_id}"
+      ;;
+  esac
+}
+
+start_command_listener() {
+  bashio::log.info "Starting MQTT command listener on ${BASE_TOPIC}/+/cmd/#"
+  (
+    while true; do
+      mosquitto_sub ${MQTT_ARGS} -t "${BASE_TOPIC}/+/cmd/#" -v | while IFS= read -r line; do
+        [ -z "${line}" ] && continue
+        local topic="${line%% *}"
+        local payload=""
+        if [ "${topic}" = "${line}" ]; then
+          payload=""
+        else
+          payload=${line#"${topic}"}
+          payload=${payload# }
+        fi
+        handle_command_message "${topic}" "${payload}"
+      done
+      bashio::log.warning "MQTT command listener exited unexpectedly, restarting in 5 seconds..."
+      sleep 5
+    done
+  ) &
+
+  COMMAND_LISTENER_PID=$!
+  bashio::log.info "MQTT command listener started (PID ${COMMAND_LISTENER_PID})."
+}
+
 # ==========================
 #  Optional: log vico-cli version
 # ==========================
@@ -811,7 +1091,7 @@ while true; do
   poll_device_health
   bashio::log.info "Polling vico-cli for events..."
 
-  JSON_OUTPUT=$(/usr/local/bin/vico-cli events list --format json 2>/tmp/vico_error.log)
+  JSON_OUTPUT=$(/usr/local/bin/vico-cli --region "${REGION}" events list --format json 2>/tmp/vico_error.log)
   EXIT_CODE=$?
 
   maybe_warn_region_mismatch "events list" "${JSON_OUTPUT}" "/tmp/vico_error.log"
@@ -868,6 +1148,7 @@ while true; do
       bashio::log.debug "Event for ${SAFE_ID} (${CAMERA_NAME}) type='${EVENT_TYPE}': ${event_preview}"
 
       ensure_discovery_published "${CAMERA_ID}" "${CAMERA_NAME}"
+      cache_camera_metadata "${CAMERA_ID}" "${SAFE_ID}" "${CAMERA_NAME}"
       publish_event_for_camera "${SAFE_ID}" "${event}"
 
       if [ "${EVENT_TYPE}" = "motion" ] || [ "${EVENT_TYPE}" = "person" ] || [ "${EVENT_TYPE}" = "human" ] || [ "${EVENT_TYPE}" = "bird" ]; then
@@ -898,6 +1179,7 @@ while true; do
     bashio::log.debug "Event for ${SAFE_ID} (${CAMERA_NAME}) type='${EVENT_TYPE}': ${event_preview}"
 
     ensure_discovery_published "${CAMERA_ID}" "${CAMERA_NAME}"
+    cache_camera_metadata "${CAMERA_ID}" "${SAFE_ID}" "${CAMERA_NAME}"
     publish_event_for_camera "${SAFE_ID}" "${event}"
 
     if [ "${EVENT_TYPE}" = "motion" ] || [ "${EVENT_TYPE}" = "person" ] || [ "${EVENT_TYPE}" = "human" ] || [ "${EVENT_TYPE}" = "bird" ]; then
