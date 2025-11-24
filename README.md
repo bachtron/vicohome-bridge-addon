@@ -1,6 +1,6 @@
 # Vicohome Bridge Add-on for Home Assistant
 
-Repo: <https://github.com/KIWIDUDE564/vicohome-bridge-addon>
+Repo: <https://github.com/bachtron/vicohome-bridge-addon>
 
 > ⚠️ **Unofficial integration.**  
 > This add-on is just a thin wrapper around the excellent open-source
@@ -87,7 +87,7 @@ In Home Assistant:
 3. Add this repo URL:
 
    ```text
-   https://github.com/KIWIDUDE564/vicohome-bridge-addon
+   https://github.com/bachtron/vicohome-bridge-addon
    ```
 
 4. Click **Add**, then **Close**.

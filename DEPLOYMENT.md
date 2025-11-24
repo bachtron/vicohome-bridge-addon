@@ -19,7 +19,7 @@ After pushing, Home Assistant will automatically pick up the changes when you:
 1. Go to **Settings → Add-ons → Add-on Store**
 2. Click **⋮ → Repositories**
 3. If the repo is already added, click **⋮ → Reload** next to it
-4. Or remove and re-add the repository URL: `https://github.com/KIWIDUDE564/vicohome-bridge-addon`
+4. Or remove and re-add the repository URL: `https://github.com/bachtron/vicohome-bridge-addon`
 
 ## Option 2: Create a Branch (Recommended for Testing)
 
@@ -40,7 +40,7 @@ git push origin add-amd64-support
 ```
 
 Then in Home Assistant, you can:
-- Point to your branch by using: `https://github.com/KIWIDUDE564/vicohome-bridge-addon/tree/add-amd64-support`
+- Point to your branch by using: `https://github.com/bachtron/vicohome-bridge-addon/tree/add-amd64-support`
 - Or merge the branch to main when ready
 
 ## Installing in Home Assistant
@@ -48,7 +48,7 @@ Then in Home Assistant, you can:
 1. **Add the repository** (if not already added):
    - Go to **Settings → Add-ons → Add-on Store**
    - Click **⋮ → Repositories**
-   - Add: `https://github.com/KIWIDUDE564/vicohome-bridge-addon`
+   - Add: `https://github.com/bachtron/vicohome-bridge-addon`
    - Click **Add**, then **Close**
 
 2. **Install the add-on**:
