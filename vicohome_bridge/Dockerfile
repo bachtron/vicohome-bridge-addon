@@ -1,7 +1,11 @@
 # syntax=docker/dockerfile:1
 
 # Builder stage: compile vico-cli for Linux
-FROM golang:1.23-alpine AS builder
+ARG BUILDPLATFORM
+ARG TARGETPLATFORM
+ARG TARGETARCH
+
+FROM --platform=${BUILDPLATFORM} golang:1.23-alpine AS builder
 
 WORKDIR /src
 
@@ -12,13 +16,25 @@ RUN go mod download
 # Copy the rest of the source
 COPY vico-cli-main/ ./
 
-# Build the vico-cli binary
-RUN CGO_ENABLED=0 GOOS=linux go build -o /out/vico-cli main.go
+# Build the vico-cli binary for target architecture
+ARG TARGETARCH
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=${TARGETARCH} go build -o /out/vico-cli main.go
 
 # -------------------------------------------------------------------
-# Runtime image: Home Assistant base image for aarch64 (ARM64)
+# Runtime image: Home Assistant base image (multi-architecture)
 # -------------------------------------------------------------------
-FROM ghcr.io/home-assistant/aarch64-base:3.19
+ARG TARGETPLATFORM
+ARG TARGETARCH
+
+# HA_ARCH: Home Assistant architecture name
+# Docker uses "arm64" but Home Assistant uses "aarch64"
+# Set this explicitly when building: --build-arg HA_ARCH=aarch64 for ARM64
+# For AMD64, you can omit it or use --build-arg HA_ARCH=amd64
+ARG HA_ARCH=${TARGETARCH}
+
+# Select the appropriate base image based on target architecture
+FROM --platform=${TARGETPLATFORM} \
+  ghcr.io/home-assistant/${HA_ARCH}-base:3.19
 
 # Install MQTT client and jq for JSON handling
 RUN apk add --no-cache mosquitto-clients jq
